@@ -7,6 +7,7 @@ import {
   ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { exportPlayerCardPng, exportCompareCardPng } from './lib/cardExporter';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
@@ -1134,6 +1135,7 @@ export default function App() {
   const [refreshingBoxScore, setRefreshingBoxScore] = useState(false);
   const [boxScoreTeamTab, setBoxScoreTeamTab] = useState('away');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [exportingPng, setExportingPng] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [recentPlayers, setRecentPlayers] = useState(() => {
     try {
@@ -2269,7 +2271,7 @@ export default function App() {
             if (val >= 90) return 'bg-rose-600';
             if (val >= 70) return 'bg-orange-500';
             if (val >= 45) return 'bg-slate-400 dark:bg-slate-500';
-            if (val >= 25) return 'bg-sky-500';
+            if (val >= 25) return 'bg-blue-400';
             return 'bg-blue-600';
           };
 
@@ -2305,6 +2307,37 @@ export default function App() {
                     >
                       <ArrowLeftRight className="w-3.5 h-3.5 text-sky-500" />
                       <span>Swap</span>
+                    </button>
+                  )}
+                  {pA && pB && (
+                    <button
+                      type="button"
+                      disabled={exportingPng}
+                      onClick={async () => {
+                        setExportingPng(true);
+                        try {
+                          await exportCompareCardPng({
+                            playerA: pA,
+                            playerB: pB,
+                            teamA: getTeamInfo(pA.currentTeamAbbr || 'MLB'),
+                            teamB: getTeamInfo(pB.currentTeamAbbr || 'MLB'),
+                            statAObj,
+                            statBObj,
+                            metricRows,
+                            winsA,
+                            winsB,
+                            ties,
+                            isPitchCmp,
+                          });
+                        } finally {
+                          setExportingPng(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
+                      title="Download a shareable 1200x675 PNG graphic of this comparison"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{exportingPng ? 'Rendering...' : 'Save PNG'}</span>
                     </button>
                   )}
                   <button
@@ -2727,7 +2760,7 @@ export default function App() {
             if (val >= 90) return 'bg-rose-600';
             if (val >= 70) return 'bg-orange-500';
             if (val >= 45) return 'bg-slate-400 dark:bg-slate-500';
-            if (val >= 25) return 'bg-sky-500';
+            if (val >= 25) return 'bg-blue-400';
             return 'bg-blue-600';
           };
 
@@ -2765,6 +2798,32 @@ export default function App() {
                     >
                       <Scale className="w-3.5 h-3.5" />
                       <span>Compare</span>
+                    </button>
+                  )}
+                  {playerStats?.id && (
+                    <button
+                      type="button"
+                      disabled={exportingPng}
+                      onClick={async () => {
+                        setExportingPng(true);
+                        try {
+                          await exportPlayerCardPng({
+                            playerStats,
+                            teamInfo,
+                            groupKey,
+                            latestSeasonRow,
+                            careerStat,
+                            savant,
+                          });
+                        } finally {
+                          setExportingPng(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-500 disabled:opacity-60 transition"
+                      title="Download a shareable 1200x675 PNG stat card for this player"
+                    >
+                      <Download className="w-3.5 h-3.5 text-sky-500" />
+                      <span>{exportingPng ? 'Rendering...' : 'Save PNG'}</span>
                     </button>
                   )}
                   <button
