@@ -5,9 +5,13 @@
 @layer base {
   html {
     scroll-behavior: smooth;
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+    overflow-x: clip;
   }
   body {
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow-x: clip;
   }
 }
 

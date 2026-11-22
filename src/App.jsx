@@ -128,6 +128,39 @@ function shiftDateStr(dateStr, days) {
   return dt.toISOString().slice(0, 10);
 }
 
+function getFeedDateKey(isoStr) {
+  if (!isoStr) return 'unknown';
+  const dt = new Date(isoStr);
+  if (Number.isNaN(dt.getTime())) return 'unknown';
+  return getLocalDateStr(dt);
+}
+
+function formatFeedDateHeading(dateKey) {
+  if (!dateKey || dateKey === 'unknown') return 'Recent Moves';
+  const todayKey = getLocalDateStr();
+  const yesterdayKey = shiftDateStr(todayKey, -1);
+  if (dateKey === todayKey) return 'Today';
+  if (dateKey === yesterdayKey) return 'Yesterday';
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+const MOVE_TYPE_LABELS = {
+  SIGNING: 'Signings',
+  TRADE: 'Trades',
+  EXTENSION: 'Extensions',
+  FREE_AGENCY: 'Free Agency',
+  INJURED_LIST: 'Injured List',
+  CALLUP_OPTION: 'Call-Ups / Options',
+  DFA_WAIVER: 'DFAs & Waivers',
+};
+
 function BrandLogo({ className = 'w-9 h-9' }) {
   return (
     <svg viewBox="0 0 120 120" fill="none" className={`${className} shrink-0 drop-shadow`}>
@@ -359,7 +392,7 @@ function SlidingSegmented({
       pill: 'bg-white dark:bg-slate-900 rounded-lg shadow-sm ring-1 ring-slate-200/70 dark:ring-slate-700/80',
       activeText: 'text-sky-600 dark:text-sky-400',
       idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
-      btn: 'px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold whitespace-nowrap',
+      btn: 'px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold whitespace-nowrap tabular-nums',
       insetY: 'top-1 bottom-1',
     },
     surface: {
@@ -1686,6 +1719,39 @@ export default function App() {
     });
   }, [transactions, majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery]);
 
+  const groupedTransactions = useMemo(() => {
+    const groups = [];
+    const byKey = new Map();
+    for (const tx of filteredTransactions) {
+      const key = getFeedDateKey(tx.reported_at);
+      let grp = byKey.get(key);
+      if (!grp) {
+        grp = { key, label: formatFeedDateHeading(key), items: [] };
+        byKey.set(key, grp);
+        groups.push(grp);
+      }
+      grp.items.push(tx);
+    }
+    return groups;
+  }, [filteredTransactions]);
+
+  const hasActiveFeedFilters = Boolean(
+    searchQuery.trim() ||
+    selectedTeams.length > 0 ||
+    statusFilter !== 'ALL' ||
+    typeFilter !== 'ALL' ||
+    !majorLeagueOnly
+  );
+
+  const resetAllFeedFilters = () => {
+    setSelectedTeams([]);
+    setMyTeamsOnlyActive(false);
+    setStatusFilter('ALL');
+    setTypeFilter('ALL');
+    setSearchQuery('');
+    setMajorLeagueOnly(true);
+  };
+
   const spendingLeaderboard = useMemo(() => {
     const totals = {};
     MLB_TEAMS.forEach((t) => {
@@ -1947,7 +2013,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6">
+      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6 overflow-x-clip">
         {/* SIDE-BY-SIDE PLAYER COMPARISON VIEW */}
         {compareOpen ? (() => {
           const [pA, pB] = comparePlayers;
@@ -3221,8 +3287,18 @@ export default function App() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search player, team, or contract..."
-                      className="w-full pl-9 pr-3 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="w-full pl-9 pr-8 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        aria-label="Clear search"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   <button
@@ -3375,6 +3451,87 @@ export default function App() {
                     ]}
                   />
                 </div>
+
+                {/* Live Feed Result Counter & Removable Active Filter Chips */}
+                {!loading && transactions.length > 0 && (
+                  <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+                        Showing <strong className="text-slate-800 dark:text-slate-100">{filteredTransactions.length}</strong> of {transactions.length} moves
+                      </span>
+
+                      {searchQuery.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-300 hover:bg-sky-500/25 transition"
+                        >
+                          <span>&ldquo;{searchQuery.trim()}&rdquo;</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {selectedTeams.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTeams([]);
+                            setMyTeamsOnlyActive(false);
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-300 hover:bg-amber-500/25 transition"
+                        >
+                          <span>
+                            Teams: {selectedTeams.length <= 3 ? selectedTeams.join(', ') : `${selectedTeams.length} selected`}
+                          </span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {statusFilter !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('ALL')}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:opacity-80 transition"
+                        >
+                          <span>Status: {statusFilter === 'OFFICIAL' ? 'Official' : 'Reported'}</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {typeFilter !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setTypeFilter('ALL')}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-300 hover:bg-sky-500/25 transition"
+                        >
+                          <span>{MOVE_TYPE_LABELS[typeFilter] || typeFilter}</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {!majorLeagueOnly && (
+                        <button
+                          type="button"
+                          onClick={() => setMajorLeagueOnly(true)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/25 transition"
+                        >
+                          <span>Including MiLB</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    {hasActiveFeedFilters && (
+                      <button
+                        type="button"
+                        onClick={resetAllFeedFilters}
+                        className="text-[11px] font-extrabold text-rose-500 hover:underline shrink-0"
+                      >
+                        Reset All
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {loading ? (
@@ -3411,8 +3568,21 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {filteredTransactions.map((tx) => {
+                <div className="space-y-6">
+                  {groupedTransactions.map((dateGroup) => (
+                    <section key={dateGroup.key} className="space-y-3">
+                      <div className="sticky top-[68px] z-20 flex items-center gap-3 py-1 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-sm">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 shadow-sm">
+                          <Calendar className="w-3 h-3 text-sky-500" />
+                          <span>{dateGroup.label}</span>
+                        </span>
+                        <div className="flex-1 h-px bg-slate-200/80 dark:bg-slate-800/80" />
+                        <span className="text-[11px] font-bold text-slate-400 tabular-nums">
+                          {dateGroup.items.length} {dateGroup.items.length === 1 ? 'move' : 'moves'}
+                        </span>
+                      </div>
+                      <div className="space-y-3">
+                        {dateGroup.items.map((tx) => {
                     const destTeam = getTeamInfo(tx.to_team || tx.from_team);
                     const isNew = new Date(tx.reported_at).getTime() > lastVisit;
                     const stale = isStaleRumor(tx);
@@ -3655,6 +3825,9 @@ export default function App() {
                       </article>
                     );
                   })}
+                      </div>
+                    </section>
+                  ))}
                 </div>
               )}
             </div>
@@ -3814,8 +3987,18 @@ export default function App() {
                       value={faSearch}
                       onChange={(e) => setFaSearch(e.target.value)}
                       placeholder="Search free agents by name or team..."
-                      className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="w-full pl-8 pr-8 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
+                    {faSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setFaSearch('')}
+                        aria-label="Clear free agent search"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                   <button
                     onClick={() => setWatchlistOnly((w) => !w)}
@@ -3841,22 +4024,38 @@ export default function App() {
                   />
                 </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => (
-                    <button
-                      key={pos}
-                      onClick={() => setFaPositionFilter(pos)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        faPositionFilter === pos
-                          ? 'bg-sky-600 text-white'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {pos}
-                    </button>
-                  ))}
-                </div>
+                <SlidingSegmented
+                  variant="sky"
+                  value={faPositionFilter}
+                  onChange={setFaPositionFilter}
+                  buttonClassName="!px-2.5 !font-bold"
+                  options={['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => ({
+                    id: pos,
+                    label: pos,
+                  }))}
+                />
               </div>
+
+              {!loadingFreeAgents && freeAgents.length > 0 && (
+                <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+                    Showing <strong className="text-slate-800 dark:text-slate-100">{filteredFreeAgents.length}</strong> of {freeAgents.length} {selectedFaClass} free agents
+                  </span>
+                  {(faSearch.trim() || faPositionFilter !== 'ALL' || watchlistOnly) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFaSearch('');
+                        setFaPositionFilter('ALL');
+                        setWatchlistOnly(false);
+                      }}
+                      className="text-[11px] font-extrabold text-rose-500 hover:underline"
+                    >
+                      Reset Filters
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {loadingFreeAgents ? (
