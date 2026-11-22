@@ -188,17 +188,33 @@ async function fetchPlayerSavant(playerId, year, isPitcher) {
 }
 
 function mapSeasonSplits(block) {
-  return (block?.splits || [])
+  const rows = (block?.splits || [])
     .filter((sp) => sp.season && sp.stat)
-    .map((sp) => ({
-      season: sp.season,
-      team:
-        MLB_TEAM_ID_TO_ABBR[sp.team?.id] ||
-        sp.team?.abbreviation ||
-        (sp.numTeams ? `${sp.numTeams} TM` : sp.team?.name?.slice(0, 3).toUpperCase() || 'MLB'),
-      stat: sp.stat,
-    }))
-    .reverse();
+    .map((sp, idx) => {
+      const isCombined = Boolean((!sp.team && sp.numTeams) || (sp.numTeams && sp.numTeams > 1));
+      return {
+        season: String(sp.season),
+        team: isCombined
+          ? `${sp.numTeams} TM`
+          : MLB_TEAM_ID_TO_ABBR[sp.team?.id] ||
+            sp.team?.abbreviation ||
+            sp.team?.name?.slice(0, 3).toUpperCase() ||
+            'MLB',
+        isCombined,
+        _idx: idx,
+        stat: sp.stat,
+      };
+    });
+
+  // Sort newest season first; within the same season, put the combined multi-team total row FIRST
+  rows.sort((a, b) => {
+    const yrDiff = Number(b.season) - Number(a.season);
+    if (yrDiff !== 0) return yrDiff;
+    if (a.isCombined !== b.isCombined) return a.isCombined ? -1 : 1;
+    return a._idx - b._idx;
+  });
+
+  return rows.map(({ _idx, ...rest }) => rest);
 }
 
 function extractGroupStats(statsArray, groupName) {
@@ -219,19 +235,57 @@ function extractGroupStats(statsArray, groupName) {
   };
 }
 
+const SPLIT_ORDER = { h: 1, a: 2, vl: 3, vr: 4 };
+
 function extractSitSplits(statsArray, groupName) {
   const block = (statsArray || []).find(
     (s) =>
       (s?.group?.displayName || '').toLowerCase() === groupName &&
       (s?.type?.displayName || '').toLowerCase() === 'statsplits'
   );
-  return (block?.splits || [])
-    .filter((sp) => sp.split?.description && sp.stat)
-    .map((sp) => ({
-      code: sp.split.code,
+
+  // MLB returns separate rows per team PLUS a combined season total row for traded players.
+  // Group by split.code and keep ONLY the combined season total (or single-team row) to prevent duplicate rows.
+  const byCode = new Map();
+  for (const sp of block?.splits || []) {
+    const code = sp?.split?.code;
+    if (!code || !sp.split?.description || !sp.stat) continue;
+
+    const isCombined = Boolean(!sp.team || (sp.numTeams && sp.numTeams > 1));
+    const entry = {
+      code,
       label: sp.split.description,
+      team: isCombined
+        ? (sp.numTeams && sp.numTeams > 1 ? `${sp.numTeams} TM` : 'Total')
+        : (MLB_TEAM_ID_TO_ABBR[sp.team?.id] || sp.team?.abbreviation || 'MLB'),
+      isCombined,
       stat: sp.stat,
-    }));
+    };
+
+    const existing = byCode.get(code);
+    if (!existing) {
+      byCode.set(code, entry);
+    } else if (isCombined && !existing.isCombined) {
+      byCode.set(code, entry);
+    } else if (isCombined === existing.isCombined) {
+      // Fallback if neither flags numTeams: prefer the row with larger sample (PA / AB / IP)
+      const curSample =
+        Number(sp.stat.plateAppearances || 0) ||
+        Number(sp.stat.atBats || 0) ||
+        parseFloat(sp.stat.inningsPitched || 0);
+      const prevSample =
+        Number(existing.stat.plateAppearances || 0) ||
+        Number(existing.stat.atBats || 0) ||
+        parseFloat(existing.stat.inningsPitched || 0);
+      if (curSample > prevSample) {
+        byCode.set(code, entry);
+      }
+    }
+  }
+
+  return Array.from(byCode.values()).sort(
+    (a, b) => (SPLIT_ORDER[a.code] || 99) - (SPLIT_ORDER[b.code] || 99)
+  );
 }
 
 async function handleSearch(q, res) {
@@ -326,6 +380,9 @@ export default async function handler(req, res) {
     const requestedSavantYear = /^\d{4}$/.test(String(req.query?.savantYear || ''))
       ? String(req.query.savantYear)
       : latestSeason;
+    const requestedSplitsYear = /^\d{4}$/.test(String(req.query?.splitsYear || ''))
+      ? String(req.query.splitsYear)
+      : latestSeason;
     const savantIsPitcher =
       req.query?.savantGroup === 'pitching'
         ? true
@@ -333,17 +390,17 @@ export default async function handler(req, res) {
         ? false
         : isPitcher;
 
-    // Fetch Situational Splits (latest season) + Baseball Savant Statcast in parallel
+    // Fetch Situational Splits + Baseball Savant Statcast in parallel
     const [splitsRes, savant] = await Promise.all([
       fetch(
-        `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=statSplits&group=hitting,pitching&season=${latestSeason}&sitCodes=vl,vr,h,a`
+        `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=statSplits&group=hitting,pitching&season=${requestedSplitsYear}&sitCodes=vl,vr,h,a`
       ).catch(() => null),
       fetchPlayerSavant(playerId, requestedSavantYear, savantIsPitcher),
     ]);
 
     const splitsJson = splitsRes && splitsRes.ok ? await splitsRes.json() : { stats: [] };
     const splits = {
-      season: latestSeason,
+      season: requestedSplitsYear,
       hitting: extractSitSplits(splitsJson.stats, 'hitting'),
       pitching: extractSitSplits(splitsJson.stats, 'pitching'),
     };
