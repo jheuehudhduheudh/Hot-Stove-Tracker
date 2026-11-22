@@ -9,46 +9,106 @@ const MLB_TEAM_ID_TO_ABBR = {
 
 const ALL_MLB_TEAM_IDS = Object.keys(MLB_TEAM_ID_TO_ABBR).join(',');
 
-function formatStatLine(person) {
+function isPrimaryPitcher(person) {
+  const abbr = person?.primaryPosition?.abbreviation || '';
+  const type = person?.primaryPosition?.type || '';
+  return type === 'Pitcher' || ['P', 'SP', 'RP', 'RHP', 'LHP'].includes(abbr);
+}
+
+function getPreferredStatSplit(person) {
   const stats = person?.stats || [];
-  for (const s of stats) {
-    const split = s?.splits?.[0]?.stat;
-    if (!split) continue;
-    const group = s?.group?.displayName?.toLowerCase() || '';
-    if (group === 'pitching' && (split.inningsPitched || split.era)) {
-      return `${split.era || '—'} ERA • ${split.whip || '—'} WHIP • ${split.strikeOuts ?? 0} K (${split.inningsPitched || '0'} IP)`;
-    }
-    if (group === 'hitting' && (split.atBats > 0 || split.avg)) {
-      return `${split.avg || '—'} AVG • ${split.homeRuns ?? 0} HR • ${split.ops || '—'} OPS`;
-    }
+  const wantsPitching = isPrimaryPitcher(person);
+  const preferredGroup = wantsPitching ? 'pitching' : 'hitting';
+
+  const preferred = stats.find(
+    (s) => (s?.group?.displayName || '').toLowerCase() === preferredGroup && s?.splits?.[0]?.stat
+  );
+  if (preferred) {
+    return { group: preferredGroup, stat: preferred.splits[0].stat };
+  }
+
+  // Fallback only if primary stat group has no data
+  const fallback = stats.find((s) => s?.splits?.[0]?.stat);
+  if (fallback) {
+    return {
+      group: (fallback?.group?.displayName || '').toLowerCase(),
+      stat: fallback.splits[0].stat,
+    };
+  }
+  return null;
+}
+
+function formatStatLine(person) {
+  const picked = getPreferredStatSplit(person);
+  if (!picked) return '';
+  const { group, stat: split } = picked;
+
+  if (group === 'pitching' && (split.inningsPitched || split.era)) {
+    return `${split.era || '—'} ERA • ${split.whip || '—'} WHIP • ${split.strikeOuts ?? 0} K (${split.inningsPitched || '0'} IP)`;
+  }
+  if (group === 'hitting' && (split.atBats > 0 || split.avg)) {
+    return `${split.avg || '—'} AVG • ${split.homeRuns ?? 0} HR • ${split.ops || '—'} OPS`;
   }
   return '';
 }
 
-function getPerformanceScore(person) {
-  const stats = person?.stats || [];
-  let score = 0;
-  for (const s of stats) {
-    const split = s?.splits?.[0]?.stat;
-    if (!split) continue;
-    const group = s?.group?.displayName?.toLowerCase() || '';
-    if (group === 'hitting') {
-      score += (Number(split.gamesPlayed || 0) * 1.5) + (Number(split.homeRuns || 0) * 4) + (Number(split.hits || 0) * 0.6);
+function getPerformanceScore(person, isCareer = false) {
+  const picked = getPreferredStatSplit(person);
+  if (!picked) return 0;
+  const { group, stat: split } = picked;
+
+  if (group === 'hitting') {
+    const games = Number(split.gamesPlayed || 0);
+    const hr = Number(split.homeRuns || 0);
+    const hits = Number(split.hits || 0);
+    const ops = parseFloat(split.ops || 0);
+    if (isCareer) {
+      return (games * 0.25) + (hr * 1.1) + (ops >= 0.75 ? ops * 90 : ops * 40);
     }
-    if (group === 'pitching') {
-      score += (Number(split.gamesPlayed || 0) * 1.2) + (Number(split.strikeOuts || 0) * 0.8) + (parseFloat(split.inningsPitched || 0) * 1.1);
-    }
+    return (games * 1.1) + (hr * 4.5) + (hits * 0.5) + (ops > 0 ? ops * 85 : 0);
   }
-  return score;
+
+  if (group === 'pitching') {
+    const ip = parseFloat(split.inningsPitched || 0);
+    const ks = Number(split.strikeOuts || 0);
+    const era = parseFloat(split.era || 5.5);
+    const eraBonus = ip >= 30 ? Math.max(0, (4.8 - era) * 35) : 0;
+    if (isCareer) {
+      return (ip * 0.2) + (ks * 0.15) + eraBonus;
+    }
+    return (ip * 1.0) + (ks * 0.75) + eraBonus;
+  }
+
+  return 0;
+}
+
+function assignTier(score, isCareer) {
+  if (isCareer) {
+    if (score >= 420) return 'Elite';
+    if (score >= 250) return 'Top Tier';
+    if (score >= 110) return 'MLB Regular';
+    return 'Depth';
+  }
+  if (score >= 325) return 'Elite';
+  if (score >= 225) return 'Top Tier';
+  if (score >= 115) return 'MLB Regular';
+  return 'Depth';
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
 
   const currentYear = new Date().getFullYear();
-  const statSeason = new Date().getMonth() >= 9 ? currentYear : currentYear - 1;
+  const defaultStatSeason = new Date().getMonth() >= 9 ? currentYear : currentYear - 1;
+  const requestedSeason = String(req.query?.season || defaultStatSeason).toLowerCase();
+  const isCareer = requestedSeason === 'career';
+  const statSeason = isCareer
+    ? 'career'
+    : (/^\d{4}$/.test(requestedSeason) ? Number(requestedSeason) : defaultStatSeason);
+
   let candidates = [];
 
+  // Attempt 1: Official MLB Stats API /people/freeAgents endpoint
   for (const season of [currentYear, currentYear + 1, currentYear - 1]) {
     try {
       const r = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${season}`);
@@ -68,10 +128,11 @@ export default async function handler(req, res) {
         }
       }
     } catch {
-      // Fall through to official transaction scan
+      // Fall through to transaction scan
     }
   }
 
+  // Attempt 2: Build live unsigned free agent pool from official MLB Stats API transactions
   if (candidates.length === 0) {
     try {
       const end = new Date();
@@ -142,12 +203,16 @@ export default async function handler(req, res) {
   const limited = candidates.slice(0, 150);
   const enriched = [];
 
+  const hydrateParam = isCareer
+    ? 'stats(group=[hitting,pitching],type=[career])'
+    : `stats(group=[hitting,pitching],type=[season],season=${statSeason})`;
+
   for (let i = 0; i < limited.length; i += 50) {
     const chunk = limited.slice(i, i + 50);
     const ids = chunk.map((c) => c.playerId).join(',');
     try {
       const pRes = await fetch(
-        `https://statsapi.mlb.com/api/v1/people?personIds=${ids}&hydrate=stats(group=[hitting,pitching],type=[season],season=${statSeason})`
+        `https://statsapi.mlb.com/api/v1/people?personIds=${ids}&hydrate=${hydrateParam}`
       );
       if (pRes.ok) {
         const pData = await pRes.json();
@@ -156,7 +221,7 @@ export default async function handler(req, res) {
         for (const c of chunk) {
           const p = peopleById.get(c.playerId);
           const statLine = formatStatLine(p);
-          const score = getPerformanceScore(p);
+          const score = getPerformanceScore(p, isCareer);
           const pos = p?.primaryPosition?.abbreviation || c.position || 'MLB';
           enriched.push({
             playerId: c.playerId,
@@ -164,10 +229,10 @@ export default async function handler(req, res) {
             position: pos,
             age: p?.currentAge || '—',
             lastTeam: c.lastTeam,
-            statLine: statLine || `MLB Free Agent (${c.faDate || statSeason})`,
+            statLine: statLine || `No MLB stats in ${isCareer ? 'career' : statSeason}`,
             hasMlbStats: Boolean(statLine),
-            score,
-            tier: score >= 140 ? 'Top Tier' : score >= 55 ? 'MLB Regular' : 'Available',
+            score: Number(score.toFixed(1)),
+            tier: assignTier(score, isCareer),
           });
         }
       }
@@ -179,7 +244,7 @@ export default async function handler(req, res) {
           statLine: 'MLB Free Agent',
           hasMlbStats: false,
           score: 0,
-          tier: 'Available',
+          tier: 'Depth',
         });
       }
     }

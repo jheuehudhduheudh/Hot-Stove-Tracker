@@ -89,7 +89,8 @@ function parseContractDetails(title, description = '') {
   }
 
   let totalMillions = null;
-  const moneyMatch = combined.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)\s*(MM|M|million|B|billion|K|thousand)?\b/i);
+  // Matches $245M, $245MM, $245.5 million, $18-million, $46.5-million, $1.2B, $750K
+  const moneyMatch = combined.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)[\s-]*(MM|M|million|B|billion|K|thousand)?\b/i);
   if (moneyMatch) {
     const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
     const unit = (moneyMatch[2] || '').toLowerCase();
@@ -131,7 +132,8 @@ function parseRssItems(xml) {
   const items = [];
   const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
 
-  const speculationPattern = /(receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|listening\s+to|could\s+|might\s+|rumors|mailbag|live\s+chat|poll|predictions|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|expected\s+to\s+shop|shopping\s+)/i;
+  const speculationPattern = /(had\s+interest|have\s+interest|expressed\s+interest|receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|trade\s+deadline|listening\s+to|could\s+|might\s+|rumors|mailbag|live\s+chat|poll|predictions|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|expected\s+to\s+shop|shopping\s+|offseason\s+outlook|arbitration\s+projections|predicted\s+salaries|free\s+agent\s+profile|contract\s+prediction)/i;
+
   const actionPattern = /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|acquire|acquires|acquired|trade|trades|traded|extend|extends|extended|extension|designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|exercise|exercises|exercised|decline|declines|declined|accept|accepts|accepted|qualifying\s+offer|outright|outrighted)\b/i;
 
   for (const block of itemBlocks.slice(0, 45)) {
@@ -235,12 +237,15 @@ export default async function handler(req, res) {
     }
   }
 
-  // Auto-clean winter league / minor-league / broken HTML rows from earlier syncs
+  // Auto-clean winter league / minor-league / broken HTML / throwback rumor rows
   try {
     await supabase.from('transactions').delete().is('to_team', null).is('from_team', null).is('team_a', null);
     await supabase.from('transactions').delete().ilike('headline', '%assigned to%');
     await supabase.from('transactions').delete().ilike('headline', '%&#%');
     await supabase.from('transactions').delete().ilike('headline', '%Receiving Trade Interest%');
+    await supabase.from('transactions').delete().ilike('headline', '%Had Interest In%');
+    await supabase.from('transactions').delete().ilike('headline', '%At Trade Deadline%');
+    await supabase.from('transactions').delete().ilike('headline', '%Offseason Outlook%');
   } catch (cleanErr) {
     console.error('Cleanup warning:', cleanErr.message);
   }
@@ -257,7 +262,7 @@ export default async function handler(req, res) {
   for (const feedUrl of rssFeeds) {
     try {
       const rssRes = await fetch(feedUrl, {
-        headers: { 'User-Agent': 'HotStoveTracker/1.2' },
+        headers: { 'User-Agent': 'HotStoveTracker/1.3' },
       });
       if (!rssRes.ok) continue;
       const xml = await rssRes.text();
@@ -299,7 +304,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // Official MLB Stats API Transactions — STRICTLY 30 MLB Teams Only (Last 30 Days)
+  // Official MLB Stats API Transactions — Strictly 30 MLB Teams Only (Last 30 Days)
   try {
     const end = new Date();
     const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
