@@ -2,29 +2,21 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="description" content="Live MLB Hot Stove Tracker — Real-time MLB free agent signings, trades, rosters, injured list, scores, standings, and multi-year player stats." />
-    <meta property="og:title" content="Hot Stove Tracker — Live MLB Free Agency, Trades & Season Hub" />
-    <meta property="og:description" content="Track live MLB signings, trades, free agents by year, 26-man rosters, injured lists, scores, and standings." />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20120%20120%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%2212%22%20y1%3D%228%22%20x2%3D%22108%22%20y2%3D%22112%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23f97316%22%2F%3E%3Cstop%20offset%3D%2252%25%22%20stop-color%3D%22%23e11d48%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230284c7%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22f%22%20x1%3D%2260%22%20y1%3D%2216%22%20x2%3D%2260%22%20y2%3D%2296%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef08a%22%2F%3E%3Cstop%20offset%3D%2255%25%22%20stop-color%3D%22%23fb923c%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23f43f5e%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%22108%22%20height%3D%22108%22%20rx%3D%2228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Crect%20x%3D%2210%22%20y%3D%2210%22%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2224%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.9%22%2F%3E%3Cpath%20d%3D%22M61%2018C61%2018%2088%2039%2088%2067C88%2084.5%2075.5%2098%2060%2098C44.5%2098%2032%2084.5%2032%2067C32%2054%2040%2043%2045%2038C44%2046%2048%2051%2052%2051C49%2039%2054%2026%2061%2018Z%22%20fill%3D%22url%28%23f%29%22%2F%3E%3Ccircle%20cx%3D%2260%22%20cy%3D%2270%22%20r%3D%2221%22%20fill%3D%22%23f8fafc%22%2F%3E%3Cpath%20d%3D%22M47%2055C53%2062%2053%2078%2047%2085M73%2055C67%2062%2067%2078%2073%2085%22%20stroke%3D%22%23e11d48%22%20stroke-width%3D%223%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E" />
-    <link rel="shortcut icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20120%20120%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%2212%22%20y1%3D%228%22%20x2%3D%22108%22%20y2%3D%22112%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23f97316%22%2F%3E%3Cstop%20offset%3D%2252%25%22%20stop-color%3D%22%23e11d48%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230284c7%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22f%22%20x1%3D%2260%22%20y1%3D%2216%22%20x2%3D%2260%22%20y2%3D%2296%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef08a%22%2F%3E%3Cstop%20offset%3D%2255%25%22%20stop-color%3D%22%23fb923c%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23f43f5e%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%22108%22%20height%3D%22108%22%20rx%3D%2228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Crect%20x%3D%2210%22%20y%3D%2210%22%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2224%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.9%22%2F%3E%3Cpath%20d%3D%22M61%2018C61%2018%2088%2039%2088%2067C88%2084.5%2075.5%2098%2060%2098C44.5%2098%2032%2084.5%2032%2067C32%2054%2040%2043%2045%2038C44%2046%2048%2051%2052%2051C49%2039%2054%2026%2061%2018Z%22%20fill%3D%22url%28%23f%29%22%2F%3E%3Ccircle%20cx%3D%2260%22%20cy%3D%2270%22%20r%3D%2221%22%20fill%3D%22%23f8fafc%22%2F%3E%3Cpath%20d%3D%22M47%2055C53%2062%2053%2078%2047%2085M73%2055C67%2062%2067%2078%2073%2085%22%20stroke%3D%22%23e11d48%22%20stroke-width%3D%223%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E" />
-    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20120%20120%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%2212%22%20y1%3D%228%22%20x2%3D%22108%22%20y2%3D%22112%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23f97316%22%2F%3E%3Cstop%20offset%3D%2252%25%22%20stop-color%3D%22%23e11d48%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%230284c7%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22f%22%20x1%3D%2260%22%20y1%3D%2216%22%20x2%3D%2260%22%20y2%3D%2296%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef08a%22%2F%3E%3Cstop%20offset%3D%2255%25%22%20stop-color%3D%22%23fb923c%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23f43f5e%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20x%3D%226%22%20y%3D%226%22%20width%3D%22108%22%20height%3D%22108%22%20rx%3D%2228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Crect%20x%3D%2210%22%20y%3D%2210%22%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2224%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.9%22%2F%3E%3Cpath%20d%3D%22M61%2018C61%2018%2088%2039%2088%2067C88%2084.5%2075.5%2098%2060%2098C44.5%2098%2032%2084.5%2032%2067C32%2054%2040%2043%2045%2038C44%2046%2048%2051%2052%2051C49%2039%2054%2026%2061%2018Z%22%20fill%3D%22url%28%23f%29%22%2F%3E%3Ccircle%20cx%3D%2260%22%20cy%3D%2270%22%20r%3D%2221%22%20fill%3D%22%23f8fafc%22%2F%3E%3Cpath%20d%3D%22M47%2055C53%2062%2053%2078%2047%2085M73%2055C67%2062%2067%2078%2073%2085%22%20stroke%3D%22%23e11d48%22%20stroke-width%3D%223%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E" />
-    <title>Hot Stove Tracker — Live MLB Free Agency, Trades & Season Hub</title>
-    <script>
-      (function () {
-        try {
-          const saved = localStorage.getItem('hst_theme');
-          if (saved === 'light') {
-            document.documentElement.classList.remove('dark');
-          } else {
-            document.documentElement.classList.add('dark');
-          }
-        } catch (e) {}
-      })();
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hot Stove Tracker — Year-Round MLB Transactions, Free Agents &amp; Statcast</title>
+    <meta
+      name="description"
+      content="Real-time MLB offseason tracker, free agent database, Baseball Savant percentiles, club payrolls, live scores, and 30-team depth charts."
+    />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
   </head>
-  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-sky-500/30">
+  <body class="antialiased selection:bg-red-500/25 selection:text-red-200">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
