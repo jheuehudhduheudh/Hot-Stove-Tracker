@@ -1,12 +1,24 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   RefreshCw, Sun, Moon, Search, Filter, Download, Lock, Unlock,
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database,
-  ExternalLink, DollarSign, Activity
+  ExternalLink, DollarSign, Activity, Star, BarChart3
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
+
+const STAT_YEARS = ['2026', '2025', '2024', '2023', '2022', 'career'];
+
+function isFreeAgencyElection(tx) {
+  const h = (tx?.headline || '').toLowerCase();
+  return h.includes('elected free agency') || h.includes('declared free agency');
+}
+
+function getEffectiveMoveType(tx) {
+  if (isFreeAgencyElection(tx)) return 'FREE_AGENCY';
+  return tx?.move_type || 'SIGNING';
+}
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
   const [imgError, setImgError] = useState(false);
@@ -18,7 +30,7 @@ function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
     .slice(0, 2)
     .toUpperCase();
 
-  const dims = size === 'sm' ? 'w-10 h-10 text-xs' : 'w-12 h-12 text-sm';
+  const dims = size === 'sm' ? 'w-10 h-10 text-xs' : size === 'lg' ? 'w-16 h-16 text-lg' : 'w-12 h-12 text-sm';
 
   return (
     <div
@@ -64,13 +76,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('feed');
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
-  const [faSeason, setFaSeason] = useState(new Date().getFullYear());
+  const [selectedStatYear, setSelectedStatYear] = useState('2026');
   const [loadingFreeAgents, setLoadingFreeAgents] = useState(true);
   const [faSearch, setFaSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [syncNotice, setSyncNotice] = useState('');
+  const autoSyncTriggeredRef = useRef(false);
+
+  // Player Year-by-Year Stats Modal
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const [playerStats, setPlayerStats] = useState(null);
+  const [loadingPlayerStats, setLoadingPlayerStats] = useState(false);
 
   const [lastVisit] = useState(() => {
     const prev = localStorage.getItem('hst_last_visit');
@@ -78,6 +96,14 @@ export default function App() {
     return prev ? new Date(prev).getTime() : Date.now() - 1000 * 60 * 60 * 12;
   });
 
+  const [savedMyTeams, setSavedMyTeams] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hst_my_teams');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedTeams, setSelectedTeams] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_my_teams');
@@ -86,6 +112,15 @@ export default function App() {
       return [];
     }
   });
+  const [myTeamsOnlyActive, setMyTeamsOnlyActive] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hst_my_teams');
+      return saved ? JSON.parse(saved).length > 0 : false;
+    } catch {
+      return false;
+    }
+  });
+
   const [majorLeagueOnly, setMajorLeagueOnly] = useState(true);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -102,7 +137,32 @@ export default function App() {
   const [editingTx, setEditingTx] = useState(null);
   const [newMoveModalOpen, setNewMoveModalOpen] = useState(false);
 
-  const fetchTransactions = async () => {
+  const openTeamHub = (abbr) => {
+    if (!abbr || abbr === 'MLB') return;
+    setHubTeam(abbr);
+    setActiveTab('teamHub');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const openPlayerModal = async (playerId, playerName, teamAbbr) => {
+    if (!playerId) return;
+    setSelectedPlayer({ playerId, playerName, teamAbbr });
+    setPlayerStats(null);
+    setLoadingPlayerStats(true);
+    try {
+      const res = await fetch(`/api/player?id=${playerId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerStats(data);
+      }
+    } catch {
+      // Leave null if unreachable
+    } finally {
+      setLoadingPlayerStats(false);
+    }
+  };
+
+  const fetchTransactions = async (allowAutoSync = false) => {
     setLoading(true);
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase
@@ -118,8 +178,18 @@ export default function App() {
 
       if (!error && data) {
         setTransactions(data);
-        if (meta?.last_synced_at) setLastSyncedAt(meta.last_synced_at);
+        const syncedIso = meta?.last_synced_at || null;
+        if (syncedIso) setLastSyncedAt(syncedIso);
         setLoading(false);
+
+        // Background auto-sync if last sync is older than 15 minutes
+        if (allowAutoSync && !autoSyncTriggeredRef.current) {
+          const ageMs = syncedIso ? Date.now() - new Date(syncedIso).getTime() : Infinity;
+          if (ageMs > 15 * 60 * 1000) {
+            autoSyncTriggeredRef.current = true;
+            handleSyncNow(false, true);
+          }
+        }
         return;
       } else if (error) {
         setSyncNotice(`Supabase read error: ${error.message}`);
@@ -129,15 +199,14 @@ export default function App() {
     setLoading(false);
   };
 
-  const fetchFreeAgents = async () => {
+  const fetchFreeAgents = async (seasonParam = selectedStatYear) => {
     setLoadingFreeAgents(true);
     try {
-      const res = await fetch('/api/free-agents');
+      const res = await fetch(`/api/free-agents?season=${encodeURIComponent(seasonParam)}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data?.freeAgents)) {
           setFreeAgents(data.freeAgents);
-          if (data.season) setFaSeason(data.season);
         }
       }
     } catch {
@@ -148,28 +217,33 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchTransactions();
-    fetchFreeAgents();
+    fetchTransactions(true);
   }, []);
 
-  const handleSyncNow = async (force = false) => {
+  useEffect(() => {
+    fetchFreeAgents(selectedStatYear);
+  }, [selectedStatYear]);
+
+  const handleSyncNow = async (force = false, silent = false) => {
     setSyncing(true);
-    setSyncNotice('');
+    if (!silent) setSyncNotice('');
     try {
       const res = await fetch(`/api/sync${force ? '?force=true' : ''}`, { method: 'POST' });
       const result = await res.json().catch(() => ({}));
       if (res.ok) {
         if (result.skipped) {
-          setSyncNotice(`Already up to date (cooldown: ${result.remainingSeconds}s left)`);
+          if (!silent) setSyncNotice(`Already up to date (cooldown: ${result.remainingSeconds}s left)`);
         } else {
-          setSyncNotice(result.summary || 'Synced latest MLB moves!');
-          await fetchTransactions();
+          if (!silent || result.addedCount > 0 || result.upgradedCount > 0) {
+            setSyncNotice(result.summary || 'Synced latest MLB moves!');
+          }
+          await fetchTransactions(false);
         }
-      } else {
+      } else if (!silent) {
         setSyncNotice(result.error || `Sync failed (HTTP ${res.status})`);
       }
     } catch (err) {
-      setSyncNotice(`Sync network error: ${err.message}`);
+      if (!silent) setSyncNotice(`Sync network error: ${err.message}`);
     } finally {
       setSyncing(false);
     }
@@ -179,7 +253,9 @@ export default function App() {
     return transactions.filter((tx) => {
       if (majorLeagueOnly && !tx.is_major_league) return false;
       if (statusFilter !== 'ALL' && tx.status !== statusFilter) return false;
-      if (typeFilter !== 'ALL' && tx.move_type !== typeFilter) return false;
+
+      const effType = getEffectiveMoveType(tx);
+      if (typeFilter !== 'ALL' && effType !== typeFilter) return false;
 
       if (selectedTeams.length > 0) {
         const involved = [tx.to_team, tx.from_team, tx.team_a, tx.team_b].filter(Boolean);
@@ -213,11 +289,12 @@ export default function App() {
       }
     });
 
+    // Fixed tie-breaker: Dollars -> Total Moves -> Signings
     return Object.values(totals).sort(
       (a, b) =>
         b.totalMillions - a.totalMillions ||
-        b.signingsCount - a.signingsCount ||
-        b.totalMoves - a.totalMoves
+        b.totalMoves - a.totalMoves ||
+        b.signingsCount - a.signingsCount
     );
   }, [transactions]);
 
@@ -250,23 +327,41 @@ export default function App() {
   }, [freeAgents, faPositionFilter, faSearch]);
 
   const toggleTeam = (abbr) => {
+    setMyTeamsOnlyActive(false);
     setSelectedTeams((prev) =>
       prev.includes(abbr) ? prev.filter((t) => t !== abbr) : [...prev, abbr]
     );
   };
 
   const selectDivision = (div) => {
+    setMyTeamsOnlyActive(false);
     const divAbbrs = MLB_TEAMS.filter((t) => t.division === div).map((t) => t.abbr);
     setSelectedTeams(divAbbrs);
   };
 
   const saveMyTeams = () => {
     localStorage.setItem('hst_my_teams', JSON.stringify(selectedTeams));
+    setSavedMyTeams(selectedTeams);
+    setMyTeamsOnlyActive(selectedTeams.length > 0);
     setSyncNotice(
       selectedTeams.length > 0
         ? `Saved ${selectedTeams.join(', ')} as My Teams preset`
         : 'Cleared saved My Teams preset'
     );
+  };
+
+  const toggleMyTeamsQuickFilter = () => {
+    if (savedMyTeams.length === 0) {
+      setTeamMenuOpen(true);
+      return;
+    }
+    if (myTeamsOnlyActive) {
+      setMyTeamsOnlyActive(false);
+      setSelectedTeams([]);
+    } else {
+      setMyTeamsOnlyActive(true);
+      setSelectedTeams(savedMyTeams);
+    }
   };
 
   const exportData = (format) => {
@@ -278,7 +373,7 @@ export default function App() {
             ...filteredTransactions.map((t) =>
               [
                 t.status,
-                t.move_type,
+                getEffectiveMoveType(t),
                 `"${t.player_name || ''}"`,
                 t.from_team || '',
                 t.to_team || '',
@@ -322,7 +417,7 @@ export default function App() {
         body: JSON.stringify({ action: 'update', payload: { id: editingTx.id, updates } }),
       });
       if (res.ok) {
-        await fetchTransactions();
+        await fetchTransactions(false);
       } else {
         const errData = await res.json().catch(() => ({}));
         setSyncNotice(errData.error || 'Admin update failed');
@@ -363,7 +458,7 @@ export default function App() {
         body: JSON.stringify({ action: 'create', payload: newTx }),
       });
       if (res.ok) {
-        await fetchTransactions();
+        await fetchTransactions(false);
       } else {
         const errData = await res.json().catch(() => ({}));
         setSyncNotice(errData.error || 'Admin create failed');
@@ -377,13 +472,23 @@ export default function App() {
   const formatMinutesAgo = (iso) => {
     if (!iso) return 'Never synced';
     const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-    return mins === 0 ? 'Just now' : `${mins}m ago`;
+    if (mins === 0) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    return `${hrs}h ago`;
   };
 
   const isStaleRumor = (tx) => {
     if (tx.status !== 'REPORTED') return false;
     const ageDays = (Date.now() - new Date(tx.reported_at).getTime()) / (1000 * 60 * 60 * 24);
     return ageDays > 14;
+  };
+
+  const getTierBadgeStyle = (tier) => {
+    if (tier === 'Elite') return 'bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30';
+    if (tier === 'Top Tier') return 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/25';
+    if (tier === 'MLB Regular') return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300';
+    return 'bg-slate-500/15 text-slate-600 dark:text-slate-300';
   };
 
   const maxTeamSpend = Math.max(1, ...spendingLeaderboard.map((r) => r.totalMillions));
@@ -409,11 +514,11 @@ export default function App() {
                   }`}
                 >
                   <Database className="w-3 h-3" />
-                  {isSupabaseConfigured ? 'Supabase Live' : 'Demo Mode'}
+                  {isSupabaseConfigured ? 'Auto-Sync Live' : 'Demo Mode'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
-                Official MLB Transactions &amp; Free Agency • Synced: {formatMinutesAgo(lastSyncedAt)}
+                Official MLB Transactions &amp; Multi-Year Stats • Synced: {formatMinutesAgo(lastSyncedAt)}
               </p>
             </div>
           </div>
@@ -517,6 +622,21 @@ export default function App() {
                     />
                   </div>
 
+                  {/* Quick One-Click My Teams Toggle */}
+                  <button
+                    onClick={toggleMyTeamsQuickFilter}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition ${
+                      myTeamsOnlyActive && savedMyTeams.length > 0
+                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-300'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 hover:border-amber-500/50'
+                    }`}
+                  >
+                    <Star className={`w-3.5 h-3.5 ${myTeamsOnlyActive && savedMyTeams.length > 0 ? 'fill-current' : ''}`} />
+                    <span>
+                      {savedMyTeams.length > 0 ? `My Teams (${savedMyTeams.length})` : 'Set My Teams'}
+                    </span>
+                  </button>
+
                   <div className="relative hidden md:block">
                     <button
                       onClick={() => setTeamMenuOpen(!teamMenuOpen)}
@@ -544,7 +664,10 @@ export default function App() {
                               Save as My Teams
                             </button>
                             <button
-                              onClick={() => setSelectedTeams([])}
+                              onClick={() => {
+                                setSelectedTeams([]);
+                                setMyTeamsOnlyActive(false);
+                              }}
                               className="text-xs text-slate-400 hover:text-slate-200"
                             >
                               Clear
@@ -649,6 +772,7 @@ export default function App() {
                       { id: 'SIGNING', label: 'Signings' },
                       { id: 'TRADE', label: 'Trades' },
                       { id: 'EXTENSION', label: 'Extensions' },
+                      { id: 'FREE_AGENCY', label: 'Free Agency' },
                       { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
                     ].map((m) => (
                       <button
@@ -692,6 +816,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       setSelectedTeams([]);
+                      setMyTeamsOnlyActive(false);
                       setStatusFilter('ALL');
                       setTypeFilter('ALL');
                       setSearchQuery('');
@@ -710,6 +835,11 @@ export default function App() {
                     const stale = isStaleRumor(tx);
                     const cleanHeadline = decodeHtml(tx.headline);
                     const cleanNotes = decodeHtml(tx.contract_notes);
+                    const effType = getEffectiveMoveType(tx);
+                    const badgeLabel =
+                      effType === 'FREE_AGENCY'
+                        ? 'FREE AGENCY'
+                        : effType.replace('_', ' ');
 
                     return (
                       <article
@@ -739,8 +869,14 @@ export default function App() {
                                 </span>
                               )}
 
-                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                {tx.move_type.replace('_', ' ')}
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold uppercase ${
+                                  effType === 'FREE_AGENCY'
+                                    ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {badgeLabel}
                               </span>
 
                               {!tx.is_major_league && (
@@ -804,34 +940,41 @@ export default function App() {
                                       className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60"
                                     >
                                       <div className="flex items-center gap-2 mb-2">
-                                        <span
-                                          className="px-2 py-0.5 rounded text-xs font-black text-white"
+                                        <button
+                                          onClick={() => openTeamHub(tInfo.abbr)}
+                                          className="px-2 py-0.5 rounded text-xs font-black text-white hover:opacity-85 transition"
                                           style={{ backgroundColor: tInfo.color }}
+                                          title={`Open ${tInfo.name} Team Hub`}
                                         >
                                           {tInfo.abbr}
-                                        </span>
+                                        </button>
                                         <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
                                           {tInfo.short} Receive
                                         </span>
                                       </div>
                                       <div className="space-y-2">
                                         {side.list.map((p, i) => (
-                                          <div key={i} className="flex items-center gap-2.5">
+                                          <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => openPlayerModal(p.playerId, p.playerName, side.teamAbbr)}
+                                            className={`w-full flex items-center gap-2.5 text-left rounded-lg p-1 -m-1 transition ${
+                                              p.playerId ? 'hover:bg-slate-200/60 dark:hover:bg-slate-800/70 cursor-pointer' : 'cursor-default'
+                                            }`}
+                                          >
                                             <PlayerAvatar
                                               playerId={p.playerId}
                                               playerName={p.playerName}
                                               teamAbbr={side.teamAbbr}
                                               size="sm"
                                             />
-                                            <div>
-                                              <div className="text-sm font-bold flex items-center gap-1.5">
-                                                <span>{p.playerName}</span>
-                                                <span className="text-[11px] font-semibold px-1.5 rounded bg-slate-200 dark:bg-slate-800">
-                                                  {p.position}
-                                                </span>
-                                              </div>
+                                            <div className="text-sm font-bold flex items-center gap-1.5">
+                                              <span className={p.playerId ? 'hover:text-sky-500' : ''}>{p.playerName}</span>
+                                              <span className="text-[11px] font-semibold px-1.5 rounded bg-slate-200 dark:bg-slate-800">
+                                                {p.position}
+                                              </span>
                                             </div>
-                                          </div>
+                                          </button>
                                         ))}
                                       </div>
                                     </div>
@@ -842,37 +985,61 @@ export default function App() {
                           ) : (
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                               <div className="flex items-start sm:items-center gap-3.5">
-                                <PlayerAvatar
-                                  playerId={tx.player_id}
-                                  playerName={tx.player_name}
-                                  teamAbbr={destTeam.abbr}
-                                />
+                                <button
+                                  type="button"
+                                  onClick={() => openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
+                                  className={tx.player_id ? 'cursor-pointer hover:scale-105 transition' : 'cursor-default'}
+                                  title={tx.player_id ? 'View year-by-year stats' : undefined}
+                                >
+                                  <PlayerAvatar
+                                    playerId={tx.player_id}
+                                    playerName={tx.player_name}
+                                    teamAbbr={destTeam.abbr}
+                                  />
+                                </button>
                                 <div>
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span
-                                      className="px-2 py-0.5 rounded text-xs font-black text-white shrink-0"
+                                    <button
+                                      type="button"
+                                      onClick={() => openTeamHub(destTeam.abbr)}
+                                      className="px-2 py-0.5 rounded text-xs font-black text-white shrink-0 hover:opacity-85 transition"
                                       style={{ backgroundColor: destTeam.color }}
+                                      title={`View ${destTeam.name} Hub`}
                                     >
                                       {destTeam.abbr}
-                                    </span>
-                                    <h2 className="font-bold text-sm sm:text-base leading-snug">
+                                    </button>
+                                    <h2
+                                      onClick={() => tx.player_id && openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
+                                      className={`font-bold text-sm sm:text-base leading-snug ${
+                                        tx.player_id ? 'cursor-pointer hover:text-sky-500 transition' : ''
+                                      }`}
+                                    >
                                       {cleanHeadline}
                                     </h2>
                                   </div>
-                                  {(tx.position || tx.stat_line || cleanNotes) && (
-                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                  {(tx.position || tx.stat_line || cleanNotes || tx.player_id) && (
+                                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                                       {tx.position && (
-                                        <span className="font-bold text-slate-700 dark:text-slate-200 mr-1.5">
+                                        <span className="font-bold text-slate-700 dark:text-slate-200">
                                           {tx.position}
                                         </span>
                                       )}
                                       {tx.stat_line && (
-                                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 mr-1.5">
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
                                           {tx.stat_line}
                                         </span>
                                       )}
-                                      {cleanNotes}
-                                    </p>
+                                      {cleanNotes && <span className="line-clamp-1">{cleanNotes}</span>}
+                                      {tx.player_id && (
+                                        <button
+                                          type="button"
+                                          onClick={() => openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
+                                          className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-500 hover:underline"
+                                        >
+                                          <BarChart3 className="w-3 h-3" /> Stats
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -946,10 +1113,7 @@ export default function App() {
                   {spendingLeaderboard.slice(0, 8).map((row) => (
                     <button
                       key={row.team.abbr}
-                      onClick={() => {
-                        setHubTeam(row.team.abbr);
-                        setActiveTab('teamHub');
-                      }}
+                      onClick={() => openTeamHub(row.team.abbr)}
                       className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/70 transition text-left"
                     >
                       <div className="flex items-center gap-2">
@@ -988,9 +1152,14 @@ export default function App() {
                 ) : freeAgents.length === 0 ? (
                   <p className="text-xs text-slate-400">No free agents listed yet.</p>
                 ) : (
-                  <div className="space-y-2.5">
+                  <div className="space-y-2">
                     {freeAgents.slice(0, 6).map((fa) => (
-                      <div key={fa.playerId} className="flex items-center gap-2.5">
+                      <button
+                        key={fa.playerId}
+                        type="button"
+                        onClick={() => openPlayerModal(fa.playerId, fa.fullName, fa.lastTeam)}
+                        className="w-full flex items-center gap-2.5 p-1.5 -mx-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/70 text-left transition"
+                      >
                         <PlayerAvatar
                           playerId={fa.playerId}
                           playerName={fa.fullName}
@@ -1003,7 +1172,7 @@ export default function App() {
                           </div>
                           <div className="text-[11px] text-slate-500 truncate">{fa.statLine}</div>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -1014,22 +1183,42 @@ export default function App() {
 
         {activeTab === 'freeAgents' && (
           <div className="space-y-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-extrabold">Available MLB Free Agents</h2>
-                <p className="text-xs text-slate-500">
-                  Live unsigned MLB players with {faSeason} official MLB Stats API numbers
-                </p>
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-extrabold">Available MLB Free Agents</h2>
+                  <p className="text-xs text-slate-500">
+                    Showing {selectedStatYear === 'career' ? 'Career MLB' : `${selectedStatYear} MLB`} stats • Click any player card for full year-by-year history
+                  </p>
+                </div>
+
+                {/* Season Year Selector */}
+                <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+                  {STAT_YEARS.map((yr) => (
+                    <button
+                      key={yr}
+                      onClick={() => setSelectedStatYear(yr)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        selectedStatYear === yr
+                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      {yr === 'career' ? 'Career' : yr}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
                   <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={faSearch}
                     onChange={(e) => setFaSearch(e.target.value)}
-                    placeholder="Search free agents..."
-                    className="pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    placeholder="Search free agents by name or team..."
+                    className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -1052,7 +1241,7 @@ export default function App() {
 
             {loadingFreeAgents ? (
               <div className="text-center py-16 text-sm text-slate-400">
-                Fetching live MLB free agent list &amp; {faSeason} stats...
+                Fetching live MLB free agent list &amp; {selectedStatYear === 'career' ? 'career' : selectedStatYear} stats...
               </div>
             ) : filteredFreeAgents.length === 0 ? (
               <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
@@ -1060,7 +1249,7 @@ export default function App() {
                   No matching unsigned free agents found.
                 </p>
                 <button
-                  onClick={fetchFreeAgents}
+                  onClick={() => fetchFreeAgents(selectedStatYear)}
                   className="text-xs font-bold text-sky-500 hover:underline"
                 >
                   Retry Live MLB Fetch
@@ -1073,7 +1262,8 @@ export default function App() {
                   return (
                     <div
                       key={fa.playerId || idx}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/40 transition"
+                      onClick={() => openPlayerModal(fa.playerId, fa.fullName, fa.lastTeam)}
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/50 cursor-pointer transition shadow-sm"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <PlayerAvatar
@@ -1091,12 +1281,17 @@ export default function App() {
                           <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                             <span>Age {fa.age}</span>
                             <span>•</span>
-                            <span
-                              className="px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTeamHub(prevTeam.abbr);
+                              }}
+                              className="px-1.5 py-0.2 rounded text-[10px] font-black text-white hover:opacity-85"
                               style={{ backgroundColor: prevTeam.color }}
                             >
                               {prevTeam.abbr}
-                            </span>
+                            </button>
                           </div>
                           <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1 truncate">
                             {fa.statLine}
@@ -1104,11 +1299,7 @@ export default function App() {
                         </div>
                       </div>
                       <span
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 ${
-                          fa.tier === 'Top Tier'
-                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
-                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
-                        }`}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 ${getTierBadgeStyle(fa.tier)}`}
                       >
                         {fa.tier}
                       </span>
@@ -1174,7 +1365,13 @@ export default function App() {
                       ) : (
                         <ul className="space-y-2.5 text-sm">
                           {additions.map((a) => (
-                            <li key={a.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <li
+                              key={a.id}
+                              onClick={() => a.player_id && openPlayerModal(a.player_id, a.player_name, hubTeam)}
+                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 ${
+                                a.player_id ? 'cursor-pointer hover:border-sky-500/40' : ''
+                              }`}
+                            >
                               <div className="font-bold">{decodeHtml(a.headline)}</div>
                               <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                                 <span>{a.status}</span>
@@ -1196,7 +1393,13 @@ export default function App() {
                       ) : (
                         <ul className="space-y-2.5 text-sm">
                           {subtractions.map((s) => (
-                            <li key={s.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <li
+                              key={s.id}
+                              onClick={() => s.player_id && openPlayerModal(s.player_id, s.player_name, hubTeam)}
+                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 ${
+                                s.player_id ? 'cursor-pointer hover:border-sky-500/40' : ''
+                              }`}
+                            >
                               <div className="font-bold">{decodeHtml(s.headline)}</div>
                               <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
                                 <span>{s.status}</span>
@@ -1256,7 +1459,7 @@ export default function App() {
                 <div>
                   <h2 className="text-base font-extrabold">Offseason Spending &amp; Activity Leaderboard</h2>
                   <p className="text-xs text-slate-500">
-                    Sorted by disclosed contract dollars, then signings &amp; total roster activity (official MLB API does not disclose salaries—use Admin Lock to add private figures)
+                    Sorted by disclosed contract dollars, then total roster moves (click any team to open its Hub)
                   </p>
                 </div>
               </div>
@@ -1266,10 +1469,7 @@ export default function App() {
                   return (
                     <div
                       key={row.team.abbr}
-                      onClick={() => {
-                        setHubTeam(row.team.abbr);
-                        setActiveTab('teamHub');
-                      }}
+                      onClick={() => openTeamHub(row.team.abbr)}
                       className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
                     >
                       <div className="flex items-center justify-between">
@@ -1332,6 +1532,183 @@ export default function App() {
           );
         })}
       </nav>
+
+      {/* Clickable Player Year-by-Year Stats Modal */}
+      {selectedPlayer && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setSelectedPlayer(null)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <PlayerAvatar
+                  playerId={selectedPlayer.playerId}
+                  playerName={playerStats?.fullName || selectedPlayer.playerName}
+                  teamAbbr={selectedPlayer.teamAbbr}
+                  size="lg"
+                />
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black">
+                    {playerStats?.fullName || selectedPlayer.playerName}
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
+                    {playerStats?.position && (
+                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200">
+                        {playerStats.position}
+                      </span>
+                    )}
+                    {playerStats?.age && <span>Age {playerStats.age}</span>}
+                    {playerStats?.bats && playerStats?.throws && (
+                      <span>• B/T: {playerStats.bats}/{playerStats.throws}</span>
+                    )}
+                    {playerStats?.height && (
+                      <span>• {playerStats.height} / {playerStats.weight} lbs</span>
+                    )}
+                  </div>
+                  {playerStats?.links && (
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <a
+                        href={playerStats.links.mlb}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-400 hover:bg-sky-500/25"
+                      >
+                        MLB.com <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <a
+                        href={playerStats.links.savant}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25"
+                      >
+                        Baseball Savant <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <a
+                        href={playerStats.links.bref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25"
+                      >
+                        Baseball-Ref <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedPlayer(null)}
+                className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5">
+              {loadingPlayerStats ? (
+                <div className="text-center py-10 text-sm text-slate-400">
+                  Loading MLB year-by-year stats...
+                </div>
+              ) : !playerStats || playerStats.seasons.length === 0 ? (
+                <div className="text-center py-10 text-sm text-slate-400">
+                  No official MLB regular-season stats found for this player.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
+                        <th className="py-2 pr-3 font-bold">Year</th>
+                        <th className="py-2 pr-3 font-bold">Team</th>
+                        {playerStats.isPitcher ? (
+                          <>
+                            <th className="py-2 px-2 font-bold text-right">W-L</th>
+                            <th className="py-2 px-2 font-bold text-right">ERA</th>
+                            <th className="py-2 px-2 font-bold text-right">G</th>
+                            <th className="py-2 px-2 font-bold text-right">IP</th>
+                            <th className="py-2 px-2 font-bold text-right">SO</th>
+                            <th className="py-2 px-2 font-bold text-right">WHIP</th>
+                            <th className="py-2 pl-2 font-bold text-right">SV</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="py-2 px-2 font-bold text-right">G</th>
+                            <th className="py-2 px-2 font-bold text-right">AB</th>
+                            <th className="py-2 px-2 font-bold text-right">AVG</th>
+                            <th className="py-2 px-2 font-bold text-right">HR</th>
+                            <th className="py-2 px-2 font-bold text-right">RBI</th>
+                            <th className="py-2 px-2 font-bold text-right">SB</th>
+                            <th className="py-2 pl-2 font-bold text-right">OPS</th>
+                          </>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                      {playerStats.seasons.map((row, i) => (
+                        <tr key={`${row.season}-${i}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="py-2 pr-3 font-extrabold">{row.season}</td>
+                          <td className="py-2 pr-3 font-semibold text-slate-500">{row.team}</td>
+                          {playerStats.isPitcher ? (
+                            <>
+                              <td className="py-2 px-2 text-right">{row.stat.wins ?? 0}-{row.stat.losses ?? 0}</td>
+                              <td className="py-2 px-2 text-right font-bold">{row.stat.era ?? '—'}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.inningsPitched ?? '0.0'}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.strikeOuts ?? 0}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.whip ?? '—'}</td>
+                              <td className="py-2 pl-2 text-right">{row.stat.saves ?? 0}</td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="py-2 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.atBats ?? 0}</td>
+                              <td className="py-2 px-2 text-right font-bold">{row.stat.avg ?? '—'}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.homeRuns ?? 0}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.rbi ?? 0}</td>
+                              <td className="py-2 px-2 text-right">{row.stat.stolenBases ?? 0}</td>
+                              <td className="py-2 pl-2 text-right font-bold text-sky-600 dark:text-sky-400">{row.stat.ops ?? '—'}</td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                      {playerStats.career && (
+                        <tr className="bg-slate-100/80 dark:bg-slate-800/70 font-extrabold">
+                          <td className="py-2.5 pr-3">Career</td>
+                          <td className="py-2.5 pr-3 text-slate-500">MLB</td>
+                          {playerStats.isPitcher ? (
+                            <>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.wins ?? 0}-{playerStats.career.losses ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.era ?? '—'}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.gamesPlayed ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.inningsPitched ?? '0.0'}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.strikeOuts ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.whip ?? '—'}</td>
+                              <td className="py-2.5 pl-2 text-right">{playerStats.career.saves ?? 0}</td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.gamesPlayed ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.atBats ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.avg ?? '—'}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.homeRuns ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.rbi ?? 0}</td>
+                              <td className="py-2.5 px-2 text-right">{playerStats.career.stolenBases ?? 0}</td>
+                              <td className="py-2.5 pl-2 text-right text-sky-600 dark:text-sky-400">{playerStats.career.ops ?? '—'}</td>
+                            </>
+                          )}
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {mobileFilterOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end md:hidden">
