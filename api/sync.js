@@ -50,6 +50,12 @@ const WORD_NUMBERS = {
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
 };
 
+function safeIsoDate(val) {
+  if (!val) return new Date().toISOString();
+  const d = new Date(val);
+  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
 function decodeHtml(str) {
   if (!str) return '';
   return str
@@ -187,7 +193,7 @@ function parseRssItems(xml) {
       headline: title,
       source_name: 'MLB Trade Rumors',
       source_url: link || 'https://www.mlbtraderumors.com',
-      reported_at: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+      reported_at: safeIsoDate(pubDate),
       move_type: moveType,
       is_major_league: !isMinorLeague,
       to_team: team,
@@ -385,7 +391,7 @@ export default async function handler(req, res) {
             headline: desc,
             source_name: 'MLB.com Official',
             source_url: 'https://www.mlb.com/transactions',
-            reported_at: tx.date ? new Date(tx.date).toISOString() : new Date().toISOString(),
+            reported_at: safeIsoDate(tx.date),
             official_date: tx.date || fmt(end),
             player_id: tx.person?.id || null,
             player_name: playerName,
@@ -436,7 +442,7 @@ export default async function handler(req, res) {
           headline: decodeHtml(first.description || `${teamA} and ${teamB} Complete Trade`),
           source_name: 'MLB.com Official',
           source_url: 'https://www.mlb.com/transactions',
-          reported_at: first.date ? new Date(first.date).toISOString() : new Date().toISOString(),
+          reported_at: safeIsoDate(first.date),
           official_date: first.date || fmt(end),
           to_team: teamA,
           from_team: teamB,
