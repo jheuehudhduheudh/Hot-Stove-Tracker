@@ -4,7 +4,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
@@ -302,12 +302,37 @@ function StandingsSkeleton({ label = 'Loading MLB standings...' }) {
 }
 
 function YearPicker({ value, onChange, years = ALL_SEASON_YEARS, quickYears = QUICK_YEARS }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const isCustomYear = !quickYears.includes(String(value));
+
   return (
-    <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+    <div ref={wrapRef} className="relative flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
       {quickYears.map((yr) => (
         <button
           key={yr}
-          onClick={() => onChange(yr)}
+          type="button"
+          onClick={() => {
+            onChange(yr);
+            setOpen(false);
+          }}
           className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
             String(value) === String(yr)
               ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
@@ -317,22 +342,320 @@ function YearPicker({ value, onChange, years = ALL_SEASON_YEARS, quickYears = QU
           {yr}
         </button>
       ))}
-      <select
-        aria-label="Select Season Year"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer focus:outline-none transition ${
-          !quickYears.includes(String(value))
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+          isCustomYear || open
             ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-            : 'bg-transparent text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
         }`}
       >
-        {years.map((yr) => (
-          <option key={yr} value={yr} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-            {yr}
-          </option>
-        ))}
-      </select>
+        <span className="tabular-nums">{isCustomYear ? value : 'More'}</span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-56 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 animate-pop-in">
+          <div className="px-1.5 pb-2 mb-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+            <span>Select Season</span>
+            <span className="tabular-nums">{years[years.length - 1]}–{years[0]}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1 max-h-56 overflow-y-auto pr-0.5">
+            {years.map((yr) => {
+              const active = String(value) === String(yr);
+              return (
+                <button
+                  key={yr}
+                  type="button"
+                  onClick={() => {
+                    onChange(yr);
+                    setOpen(false);
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-bold tabular-nums transition ${
+                    active
+                      ? 'bg-sky-600 text-white shadow-sm'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {yr}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamDropdown({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+  const selected = getTeamInfo(value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const groupedTeams = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return DIVISIONS.map((div) => {
+      const clubs = MLB_TEAMS.filter((t) => {
+        if (t.division !== div) return false;
+        if (!q) return true;
+        return `${t.name} ${t.abbr} ${t.short} ${t.division}`.toLowerCase().includes(q);
+      }).sort((a, b) => a.name.localeCompare(b.name));
+      return { division: div, clubs };
+    }).filter((g) => g.clubs.length > 0);
+  }, [query]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((o) => !o);
+          setQuery('');
+        }}
+        className={`inline-flex items-center justify-between gap-3 min-w-[235px] px-3 py-2 rounded-xl text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition ${
+          open
+            ? 'border-sky-500 ring-2 ring-sky-500/20'
+            : 'border-slate-200 dark:border-slate-800 hover:border-sky-500/60'
+        }`}
+      >
+        <span className="flex items-center gap-2.5 min-w-0">
+          <span
+            className="w-9 text-center py-0.5 rounded text-[11px] font-black shadow-sm shrink-0"
+            style={getTeamBadgeStyle(selected.color)}
+          >
+            {selected.abbr}
+          </span>
+          <span className="truncate">{selected.name}</span>
+        </span>
+        <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180 text-sky-500' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-hidden animate-pop-in">
+          <div className="p-2.5 border-b border-slate-100 dark:border-slate-800">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter by club, city, or division..."
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto p-2 space-y-3">
+            {groupedTeams.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400">No clubs match &ldquo;{query}&rdquo;</div>
+            ) : (
+              groupedTeams.map((grp) => (
+                <div key={grp.division} className="space-y-1">
+                  <div className="px-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    {grp.division}
+                  </div>
+                  <div className="space-y-0.5">
+                    {grp.clubs.map((t) => {
+                      const active = t.abbr === value;
+                      return (
+                        <button
+                          key={t.abbr}
+                          type="button"
+                          onClick={() => {
+                            onChange(t.abbr);
+                            setOpen(false);
+                          }}
+                          className={`w-full px-2 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left transition ${
+                            active
+                              ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                              : 'hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-200'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <span
+                              className="w-9 text-center py-0.5 rounded text-[10px] font-black shadow-sm shrink-0"
+                              style={getTeamBadgeStyle(t.color)}
+                            >
+                              {t.abbr}
+                            </span>
+                            <span className="text-xs font-bold truncate">{t.name}</span>
+                          </span>
+                          {active && <Check className="w-3.5 h-3.5 text-sky-500 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DatePickerPopover({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  const [selY, selM, selD] = String(value || getLocalDateStr()).split('-').map(Number);
+  const [viewYear, setViewYear] = useState(selY || 2026);
+  const [viewMonth, setViewMonth] = useState((selM || 1) - 1);
+
+  useEffect(() => {
+    if (open) {
+      setViewYear(selY || 2026);
+      setViewMonth((selM || 1) - 1);
+    }
+  }, [open, selY, selM]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const displayLabel = `${shortMonths[(selM || 1) - 1]} ${selD}, ${selY}`;
+  const todayStr = getLocalDateStr();
+
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const stepMonth = (delta) => {
+    const dt = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(dt.getFullYear());
+    setViewMonth(dt.getMonth());
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition tabular-nums ${
+          open
+            ? 'border-sky-500 ring-2 ring-sky-500/20 text-sky-600 dark:text-sky-400'
+            : 'border-slate-200 dark:border-slate-800 hover:border-sky-500'
+        }`}
+      >
+        <Calendar className="w-3.5 h-3.5 text-sky-500" />
+        <span>{displayLabel}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-72 p-3 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 space-y-3 animate-pop-in">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => stepMonth(-1)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="text-xs font-extrabold">
+              {monthNames[viewMonth]} {viewYear}
+            </div>
+            <button
+              type="button"
+              onClick={() => stepMonth(1)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400">
+            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+              <div key={d} className="py-0.5">{d}</div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {cells.map((day, idx) => {
+              if (!day) return <div key={`empty-${idx}`} />;
+              const ds = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const isSelected = ds === value;
+              const isToday = ds === todayStr;
+              return (
+                <button
+                  key={ds}
+                  type="button"
+                  onClick={() => {
+                    onChange(ds);
+                    setOpen(false);
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-bold tabular-nums transition ${
+                    isSelected
+                      ? 'bg-sky-600 text-white shadow-sm'
+                      : isToday
+                      ? 'ring-1 ring-sky-500 text-sky-500 hover:bg-sky-500/10'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-1.5">
+            {[
+              { label: 'Today', date: todayStr },
+              { label: '2026 WS G5', date: '2026-10-28' },
+              { label: 'Opening Slate', date: '2026-03-28' },
+            ].map((q) => (
+              <button
+                key={q.label}
+                type="button"
+                onClick={() => {
+                  onChange(q.date);
+                  setOpen(false);
+                }}
+                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 hover:bg-sky-600 hover:text-white transition"
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -517,6 +840,19 @@ export default function App() {
   const [heroImgError, setHeroImgError] = useState(false);
   const profileReqIdRef = useRef(0);
 
+  // Side-by-Side Player Comparison state
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [comparePlayers, setComparePlayers] = useState([null, null]); // [playerA, playerB]
+  const [loadingCompareSlot, setLoadingCompareSlot] = useState([false, false]);
+  const [compareScope, setCompareScope] = useState('career'); // 'career' | 'latest' | 'season'
+  const [compareSeasonYear, setCompareSeasonYear] = useState('2026');
+  const [compareStatGroup, setCompareStatGroup] = useState('hitting');
+  const [compareSavantYear, setCompareSavantYear] = useState('2026');
+  const [comparePickSlot, setComparePickSlot] = useState(null); // 0 or 1 when picking/replacing a player
+  const [compareSearchQuery, setCompareSearchQuery] = useState('');
+  const [compareSearchResults, setCompareSearchResults] = useState([]);
+  const [searchingCompare, setSearchingCompare] = useState(false);
+
   // Live Box Score & Highlights Modal state
   const [selectedGamePk, setSelectedGamePk] = useState(null);
   const [boxScore, setBoxScore] = useState(null);
@@ -540,6 +876,7 @@ export default function App() {
   const openTeamHub = (abbr) => {
     if (!abbr || abbr === 'MLB') return;
     setSelectedPlayer(null);
+    setCompareOpen(false);
     setSelectedGamePk(null);
     setHubTeam(abbr);
     setActiveTab('teamHub');
@@ -561,6 +898,7 @@ export default function App() {
     if (!playerId) return;
     const reqId = ++profileReqIdRef.current;
     setSelectedGamePk(null);
+    setCompareOpen(false);
     setHeroImgError(false);
     setSelectedPlayer({ playerId, playerName, teamAbbr });
     setProfileSubTab('overview');
@@ -666,6 +1004,74 @@ export default function App() {
       setLoadingBoxScore(false);
       setRefreshingBoxScore(false);
     }
+  };
+
+  const loadComparePlayer = async (slotIdx, playerId, savantYrOverride = null) => {
+    if (!playerId) return;
+    setLoadingCompareSlot((prev) => {
+      const next = [...prev];
+      next[slotIdx] = true;
+      return next;
+    });
+    try {
+      const yrParam = savantYrOverride ? `&savantYear=${encodeURIComponent(savantYrOverride)}` : '';
+      const res = await fetch(`/api/player?id=${playerId}${yrParam}`);
+      if (res.ok) {
+        const data = await res.json();
+        setComparePlayers((prev) => {
+          const next = [...prev];
+          next[slotIdx] = data;
+          const other = next[slotIdx === 0 ? 1 : 0];
+          if (!other) {
+            setCompareStatGroup(data.isPitcher ? 'pitching' : 'hitting');
+          } else if (next[0]?.isPitcher && next[1]?.isPitcher) {
+            setCompareStatGroup('pitching');
+          } else if (!next[0]?.isPitcher && !next[1]?.isPitcher) {
+            setCompareStatGroup('hitting');
+          }
+          if (data?.savant?.year && !savantYrOverride) {
+            setCompareSavantYear(String(data.savant.year));
+          }
+          return next;
+        });
+      }
+    } catch {
+      // Ignore fetch failure
+    } finally {
+      setLoadingCompareSlot((prev) => {
+        const next = [...prev];
+        next[slotIdx] = false;
+        return next;
+      });
+    }
+  };
+
+  const openCompareView = (initialPlayerData = null) => {
+    setSelectedPlayer(null);
+    setCompareOpen(false);
+    setSelectedGamePk(null);
+    setCompareOpen(true);
+    setCompareSearchQuery('');
+    setCompareSearchResults([]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (initialPlayerData && initialPlayerData.id) {
+      setComparePlayers([initialPlayerData, null]);
+      setCompareStatGroup(initialPlayerData.isPitcher ? 'pitching' : 'hitting');
+      if (initialPlayerData?.savant?.year) setCompareSavantYear(String(initialPlayerData.savant.year));
+      setComparePickSlot(1);
+    } else if (!comparePlayers[0]) {
+      setComparePickSlot(0);
+    } else if (!comparePlayers[1]) {
+      setComparePickSlot(1);
+    } else {
+      setComparePickSlot(null);
+    }
+  };
+
+  const changeCompareSavantYear = (yr) => {
+    setCompareSavantYear(String(yr));
+    if (comparePlayers[0]?.id) loadComparePlayer(0, comparePlayers[0].id, yr);
+    if (comparePlayers[1]?.id) loadComparePlayer(1, comparePlayers[1].id, yr);
   };
 
   const copyShareUrl = () => {
@@ -796,7 +1202,14 @@ export default function App() {
     const params = getInitialUrlParams();
     const pid = params.get('player');
     const gpk = params.get('game');
-    if (pid && /^\d+$/.test(pid)) {
+    const cmp = params.get('compare');
+    if (cmp) {
+      skipUrlSyncRef.current = true;
+      setCompareOpen(true);
+      const ids = cmp.split(',').filter((x) => /^\d+$/.test(x)).slice(0, 2);
+      if (ids[0]) loadComparePlayer(0, Number(ids[0]));
+      if (ids[1]) loadComparePlayer(1, Number(ids[1]));
+    } else if (pid && /^\d+$/.test(pid)) {
       skipUrlSyncRef.current = true;
       openPlayerModal(Number(pid), 'MLB Player', params.get('team') || 'MLB');
     } else if (gpk && /^\d+$/.test(gpk)) {
@@ -812,7 +1225,10 @@ export default function App() {
       return;
     }
     const params = new URLSearchParams();
-    if (selectedPlayer?.playerId) {
+    if (compareOpen) {
+      const ids = [comparePlayers[0]?.id, comparePlayers[1]?.id].filter(Boolean);
+      params.set('compare', ids.length > 0 ? ids.join(',') : 'open');
+    } else if (selectedPlayer?.playerId) {
       params.set('player', String(selectedPlayer.playerId));
     } else if (selectedGamePk) {
       params.set('tab', 'scoresStandings');
@@ -828,7 +1244,7 @@ export default function App() {
     if (nextSearch !== currentFull) {
       window.history.pushState({}, '', nextSearch);
     }
-  }, [activeTab, hubTeam, scoreDate, selectedPlayer?.playerId, selectedGamePk]);
+  }, [activeTab, hubTeam, scoreDate, selectedPlayer?.playerId, selectedGamePk, compareOpen, comparePlayers[0]?.id, comparePlayers[1]?.id]);
 
   // Respond to browser Back / Forward buttons
   useEffect(() => {
@@ -849,6 +1265,16 @@ export default function App() {
       if (tm && MLB_TEAMS.some((x) => x.abbr === tm)) setHubTeam(tm);
       if (dt && /^\d{4}-\d{2}-\d{2}$/.test(dt)) setScoreDate(dt);
 
+      const cmp = params.get('compare');
+      if (cmp) {
+        setCompareOpen(true);
+        setSelectedPlayer(null);
+        const ids = cmp.split(',').filter((x) => /^\d+$/.test(x)).slice(0, 2);
+        if (ids[0]) loadComparePlayer(0, Number(ids[0]));
+        if (ids[1]) loadComparePlayer(1, Number(ids[1]));
+      } else {
+        setCompareOpen(false);
+      }
       if (pid && /^\d+$/.test(pid)) {
         openPlayerModal(Number(pid), 'MLB Player', tm || 'MLB');
       } else {
@@ -887,6 +1313,10 @@ export default function App() {
           setMobileFilterOpen(false);
         } else if (teamMenuOpen) {
           setTeamMenuOpen(false);
+        } else if (comparePickSlot !== null) {
+          setComparePickSlot(null);
+        } else if (compareOpen) {
+          setCompareOpen(false);
         } else if (selectedPlayer) {
           setSelectedPlayer(null);
         }
@@ -894,7 +1324,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer]);
+  }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer, compareOpen, comparePickSlot]);
 
   // Track scroll position for floating Back-to-Top button
   useEffect(() => {
@@ -953,6 +1383,34 @@ export default function App() {
       clearTimeout(timer);
     };
   }, [globalPlayerQuery]);
+
+  useEffect(() => {
+    const q = compareSearchQuery.trim();
+    if (q.length < 2) {
+      setCompareSearchResults([]);
+      setSearchingCompare(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchingCompare(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/player?q=${encodeURIComponent(q)}`)
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((data) => {
+          if (!cancelled) setCompareSearchResults(Array.isArray(data?.results) ? data.results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setCompareSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearchingCompare(false);
+        });
+    }, 240);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [compareSearchQuery]);
 
   useEffect(() => {
     if (activeTab === 'scoresStandings') {
@@ -1254,7 +1712,7 @@ export default function App() {
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => { setSelectedPlayer(null); setActiveTab(tab.id); }}
+                onClick={() => { setSelectedPlayer(null); setCompareOpen(false); setActiveTab(tab.id); }}
                 className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold transition whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
@@ -1267,6 +1725,19 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => openCompareView(null)}
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold border transition ${
+                compareOpen
+                  ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
+              }`}
+              title="Compare any two MLB players side-by-side"
+            >
+              <Scale className="w-3.5 h-3.5 text-sky-500" />
+              <span className="hidden xl:inline">Compare</span>
+            </button>
+
             <button
               onClick={() => {
                 setPlayerSearchOpen(true);
@@ -1316,8 +1787,565 @@ export default function App() {
       )}
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6">
-        {/* FULL PLAYER PROFILE VIEW */}
-        {selectedPlayer ? (() => {
+        {/* SIDE-BY-SIDE PLAYER COMPARISON VIEW */}
+        {compareOpen ? (() => {
+          const [pA, pB] = comparePlayers;
+          const isPitchCmp = compareStatGroup === 'pitching';
+          const grpKey = isPitchCmp ? 'pitching' : 'hitting';
+
+          const getPlayerStatForScope = (player) => {
+            if (!player) return { stat: null, label: '' };
+            const blk = player[grpKey] || { seasons: [], career: null };
+            if (compareScope === 'career') {
+              return { stat: blk.career, label: 'Career' };
+            }
+            if (compareScope === 'latest') {
+              const row = blk.seasons?.[0] || null;
+              return { stat: row?.stat || null, label: row ? `${row.season} (${row.team})` : 'N/A' };
+            }
+            const match = (blk.seasons || []).find((s) => String(s.season) === String(compareSeasonYear));
+            return { stat: match?.stat || null, label: match ? `${match.season} (${match.team})` : `${compareSeasonYear} (N/A)` };
+          };
+
+          const statAObj = getPlayerStatForScope(pA);
+          const statBObj = getPlayerStatForScope(pB);
+
+          const sharedYearsSet = new Set();
+          [pA, pB].forEach((pl) => {
+            (pl?.[grpKey]?.seasons || []).forEach((s) => sharedYearsSet.add(String(s.season)));
+          });
+          const compareYearOptions = Array.from(sharedYearsSet).sort((a, b) => Number(b) - Number(a));
+          const savantYearOptions = Array.from(sharedYearsSet)
+            .filter((y) => Number(y) >= 2015)
+            .sort((a, b) => Number(b) - Number(a));
+
+          const metrics = isPitchCmp
+            ? [
+                { key: 'era', label: 'ERA', lowerBetter: true },
+                { key: 'whip', label: 'WHIP', lowerBetter: true },
+                { key: 'wins', label: 'Wins (W)', lowerBetter: false },
+                { key: 'losses', label: 'Losses (L)', lowerBetter: true },
+                { key: 'inningsPitched', label: 'Innings Pitched', lowerBetter: false },
+                { key: 'strikeOuts', label: 'Strikeouts (SO)', lowerBetter: false },
+                { key: 'strikeoutsPer9Inn', label: 'K / 9', lowerBetter: false },
+                { key: 'baseOnBalls', label: 'Walks (BB)', lowerBetter: true },
+                { key: 'homeRuns', label: 'HR Allowed', lowerBetter: true },
+                { key: 'saves', label: 'Saves (SV)', lowerBetter: false },
+                { key: 'gamesPlayed', label: 'Games (G)', lowerBetter: false },
+                { key: 'gamesStarted', label: 'Starts (GS)', lowerBetter: false },
+              ]
+            : [
+                { key: 'avg', label: 'Batting Avg (AVG)', lowerBetter: false },
+                { key: 'obp', label: 'On-Base % (OBP)', lowerBetter: false },
+                { key: 'slg', label: 'Slugging % (SLG)', lowerBetter: false },
+                { key: 'ops', label: 'OPS', lowerBetter: false },
+                { key: 'homeRuns', label: 'Home Runs (HR)', lowerBetter: false },
+                { key: 'rbi', label: 'RBI', lowerBetter: false },
+                { key: 'runs', label: 'Runs (R)', lowerBetter: false },
+                { key: 'hits', label: 'Hits (H)', lowerBetter: false },
+                { key: 'doubles', label: 'Doubles (2B)', lowerBetter: false },
+                { key: 'stolenBases', label: 'Stolen Bases (SB)', lowerBetter: false },
+                { key: 'baseOnBalls', label: 'Walks (BB)', lowerBetter: false },
+                { key: 'strikeOuts', label: 'Strikeouts (SO)', lowerBetter: true },
+                { key: 'gamesPlayed', label: 'Games (G)', lowerBetter: false },
+                { key: 'plateAppearances', label: 'Plate App (PA)', lowerBetter: false },
+              ];
+
+          let winsA = 0, winsB = 0, ties = 0;
+          const metricRows = metrics.map((m) => {
+            const rawA = statAObj.stat?.[m.key];
+            const rawB = statBObj.stat?.[m.key];
+            const numA = rawA !== undefined && rawA !== null && rawA !== '' ? parseFloat(rawA) : null;
+            const numB = rawB !== undefined && rawB !== null && rawB !== '' ? parseFloat(rawB) : null;
+            let winner = null;
+            if (numA !== null && numB !== null && Number.isFinite(numA) && Number.isFinite(numB)) {
+              if (Math.abs(numA - numB) < 0.0001) {
+                winner = 'tie';
+                ties++;
+              } else if (m.lowerBetter) {
+                winner = numA < numB ? 'A' : 'B';
+                if (winner === 'A') winsA++; else winsB++;
+              } else {
+                winner = numA > numB ? 'A' : 'B';
+                if (winner === 'A') winsA++; else winsB++;
+              }
+            }
+            return { ...m, rawA: rawA ?? '—', rawB: rawB ?? '—', numA, numB, winner };
+          });
+
+          // Merge Savant percentiles across both players
+          const savantMapA = new Map((pA?.savant?.percentiles || []).map((x) => [x.key, x]));
+          const savantMapB = new Map((pB?.savant?.percentiles || []).map((x) => [x.key, x]));
+          const savantKeys = [];
+          const seenSavant = new Set();
+          [...(pA?.savant?.percentiles || []), ...(pB?.savant?.percentiles || [])].forEach((x) => {
+            if (!seenSavant.has(x.key)) {
+              seenSavant.add(x.key);
+              savantKeys.push({ key: x.key, label: x.label });
+            }
+          });
+
+          const getPctPill = (val) => {
+            if (val === null || val === undefined) return 'bg-slate-200 dark:bg-slate-800 text-slate-400';
+            if (val >= 90) return 'bg-rose-600 text-white';
+            if (val >= 70) return 'bg-orange-500 text-white';
+            if (val >= 45) return 'bg-slate-500 text-white';
+            if (val >= 25) return 'bg-sky-600 text-white';
+            return 'bg-blue-700 text-white';
+          };
+
+          const getPctBar = (val) => {
+            if (val >= 90) return 'bg-rose-600';
+            if (val >= 70) return 'bg-orange-500';
+            if (val >= 45) return 'bg-slate-400 dark:bg-slate-500';
+            if (val >= 25) return 'bg-sky-500';
+            return 'bg-blue-600';
+          };
+
+          const mismatchNotice = pA && pB && pA.isPitcher !== pB.isPitcher && !pA.isTwoWay && !pB.isTwoWay;
+
+          return (
+            <div className="space-y-5 animate-fade-up">
+              {/* Top Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setCompareOpen(false)}
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                  >
+                    <ArrowLeft className="w-4 h-4 text-sky-500" />
+                    <span>Back</span>
+                  </button>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-sky-500" />
+                      <span>Side-by-Side Player Comparison</span>
+                    </h2>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {pA && pB && (
+                    <button
+                      type="button"
+                      onClick={() => setComparePlayers([pB, pA])}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                    >
+                      <ArrowLeftRight className="w-3.5 h-3.5 text-sky-500" />
+                      <span>Swap</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={copyShareUrl}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
+                    <span>{copiedLink ? 'Copied!' : 'Share'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Two Player Selector / Hero Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[0, 1].map((slotIdx) => {
+                  const pl = comparePlayers[slotIdx];
+                  const isBusy = loadingCompareSlot[slotIdx];
+                  const isPicking = comparePickSlot === slotIdx || !pl;
+                  const tInfo = pl ? getTeamInfo(pl.currentTeamAbbr || 'MLB') : null;
+
+                  return (
+                    <div
+                      key={slotIdx}
+                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
+                    >
+                      {isBusy ? (
+                        <BaseballLoader label={`Loading Player ${slotIdx === 0 ? 'A' : 'B'}`} compact />
+                      ) : isPicking ? (
+                        <div className="p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold uppercase tracking-wider text-sky-500">
+                              Select Player {slotIdx === 0 ? 'A' : 'B'}
+                            </span>
+                            {pl && (
+                              <button
+                                type="button"
+                                onClick={() => setComparePickSlot(null)}
+                                className="text-xs font-bold text-slate-400 hover:text-slate-200"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                          <div className="relative">
+                            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              autoFocus={comparePickSlot === slotIdx}
+                              value={compareSearchQuery}
+                              onChange={(e) => {
+                                setComparePickSlot(slotIdx);
+                                setCompareSearchQuery(e.target.value);
+                              }}
+                              placeholder="Search any MLB player (e.g., Aaron Judge, Tarik Skubal)..."
+                              className="w-full pl-9 pr-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                            />
+                          </div>
+
+                          <div className="max-h-56 overflow-y-auto space-y-1">
+                            {compareSearchQuery.trim().length < 2 ? (
+                              recentPlayers.length > 0 ? (
+                                <div className="space-y-1">
+                                  <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-1">
+                                    Recent Players
+                                  </div>
+                                  {recentPlayers.map((rp) => {
+                                    const rpTeam = getTeamInfo(rp.teamAbbr);
+                                    return (
+                                      <button
+                                        key={rp.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setComparePickSlot(null);
+                                          setCompareSearchQuery('');
+                                          setCompareSearchResults([]);
+                                          loadComparePlayer(slotIdx, rp.id);
+                                        }}
+                                        className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
+                                      >
+                                        <span className="flex items-center gap-2.5 min-w-0">
+                                          <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={rp.teamAbbr} size="sm" />
+                                          <span className="text-xs font-bold truncate">
+                                            {rp.fullName} <span className="text-slate-400">({rp.position})</span>
+                                          </span>
+                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-black" style={getTeamBadgeStyle(rpTeam.color)}>
+                                          {rpTeam.abbr}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="py-5 text-center text-xs text-slate-400">
+                                  Type at least 2 letters to search active or historical MLB players.
+                                </p>
+                              )
+                            ) : searchingCompare ? (
+                              <BaseballLoader label="Searching MLB players" compact />
+                            ) : compareSearchResults.length === 0 ? (
+                              <p className="py-5 text-center text-xs text-slate-400">
+                                No MLB players found for &ldquo;{compareSearchQuery}&rdquo;.
+                              </p>
+                            ) : (
+                              compareSearchResults.map((resP) => {
+                                const resTeam = getTeamInfo(resP.teamAbbr || 'MLB');
+                                return (
+                                  <button
+                                    key={resP.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setComparePickSlot(null);
+                                      setCompareSearchQuery('');
+                                      setCompareSearchResults([]);
+                                      loadComparePlayer(slotIdx, resP.id);
+                                    }}
+                                    className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
+                                  >
+                                    <span className="flex items-center gap-2.5 min-w-0">
+                                      <PlayerAvatar playerId={resP.id} playerName={resP.fullName} teamAbbr={resP.teamAbbr || 'MLB'} size="sm" />
+                                      <div className="min-w-0">
+                                        <div className="text-xs font-bold truncate">
+                                          {resP.fullName} <span className="text-slate-400">({resP.position})</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-500">
+                                          {resP.teamName}{resP.age ? ` • Age ${resP.age}` : ''}
+                                        </div>
+                                      </div>
+                                    </span>
+                                    {resP.teamAbbr && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-black shrink-0" style={getTeamBadgeStyle(resTeam.color)}>
+                                        {resTeam.abbr}
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative p-5 text-white" style={{ backgroundColor: tInfo.color }}>
+                          <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/30 to-black/15" />
+                          <div className="relative flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3.5 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => openPlayerModal(pl.id, pl.fullName, pl.currentTeamAbbr || 'MLB')}
+                                className="hover:scale-105 transition shrink-0"
+                                title="Open full profile"
+                              >
+                                <PlayerAvatar playerId={pl.id} playerName={pl.fullName} teamAbbr={pl.currentTeamAbbr || 'MLB'} size="lg" />
+                              </button>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-black uppercase">
+                                    Player {slotIdx === 0 ? 'A' : 'B'}
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded bg-black/30 text-[10px] font-bold">
+                                    {pl.position}
+                                  </span>
+                                  {pl.currentTeamAbbr && (
+                                    <span className="px-1.5 py-0.5 rounded bg-white text-slate-900 text-[10px] font-black">
+                                      {pl.currentTeamAbbr}
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openPlayerModal(pl.id, pl.fullName, pl.currentTeamAbbr || 'MLB')}
+                                  className="text-left text-lg sm:text-xl font-black truncate block mt-0.5 hover:underline"
+                                >
+                                  {pl.fullName}
+                                </button>
+                                <div className="text-[11px] text-white/85 font-semibold mt-0.5">
+                                  Age {pl.age} • B/T {pl.bats}/{pl.throws}
+                                  {pl.height ? ` • ${pl.height}` : ''}
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setComparePickSlot(slotIdx);
+                                setCompareSearchQuery('');
+                                setCompareSearchResults([]);
+                              }}
+                              className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-black/35 hover:bg-black/55 backdrop-blur shrink-0 transition"
+                            >
+                              Change
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {pA && pB && (
+                <>
+                  {/* Comparison Controls Bar */}
+                  <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                        {[
+                          { id: 'career', label: 'Career' },
+                          { id: 'latest', label: 'Latest Season' },
+                          { id: 'season', label: 'Pick Year' },
+                        ].map((sc) => (
+                          <button
+                            key={sc.id}
+                            type="button"
+                            onClick={() => setCompareScope(sc.id)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                              compareScope === sc.id
+                                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                                : 'text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {sc.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {compareScope === 'season' && compareYearOptions.length > 0 && (
+                        <YearPicker
+                          value={compareSeasonYear}
+                          onChange={setCompareSeasonYear}
+                          years={compareYearOptions}
+                          quickYears={compareYearOptions.slice(0, 3)}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                      {[
+                        { id: 'hitting', label: 'Hitting' },
+                        { id: 'pitching', label: 'Pitching' },
+                      ].map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setCompareStatGroup(g.id)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                            compareStatGroup === g.id
+                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                              : 'text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {mismatchNotice && (
+                    <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-300">
+                      Comparing a position player ({pA.isPitcher ? pB.fullName : pA.fullName}) against a pitcher ({pA.isPitcher ? pA.fullName : pB.fullName}) — switch between Hitting and Pitching above to inspect each side.
+                    </div>
+                  )}
+
+                  {/* Head-to-Head Stats Table */}
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                        Head-to-Head {isPitchCmp ? 'Pitching' : 'Batting'} Comparison ({statAObj.label} vs {statBObj.label})
+                      </div>
+                      <div className="flex items-center gap-2 text-xs font-black tabular-nums">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">
+                          {pA.fullName.split(' ').slice(-1)[0]}: {winsA}
+                        </span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-400">Ties: {ties}</span>
+                        <span className="text-slate-400">•</span>
+                        <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-500">
+                          {pB.fullName.split(' ').slice(-1)[0]}: {winsB}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                      {metricRows.map((row) => {
+                        const maxVal =
+                          row.numA !== null && row.numB !== null
+                            ? Math.max(Math.abs(row.numA), Math.abs(row.numB), 0.001)
+                            : 1;
+                        const pctA = row.numA !== null ? Math.min(100, Math.max(8, (Math.abs(row.numA) / maxVal) * 100)) : 0;
+                        const pctB = row.numB !== null ? Math.min(100, Math.max(8, (Math.abs(row.numB) / maxVal) * 100)) : 0;
+
+                        return (
+                          <div key={row.key} className="px-4 sm:px-5 py-3 grid grid-cols-12 items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800/35 transition">
+                            <div className="col-span-4 flex items-center justify-end gap-2.5">
+                              <div className="hidden sm:flex flex-1 justify-end h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                {pctA > 0 && (
+                                  <div
+                                    className={`h-full rounded-full ${row.winner === 'A' ? 'bg-emerald-500' : 'bg-slate-400/60 dark:bg-slate-600'}`}
+                                    style={{ width: `${pctA}%` }}
+                                  />
+                                )}
+                              </div>
+                              <span
+                                className={`text-sm tabular-nums ${
+                                  row.winner === 'A'
+                                    ? 'font-black text-emerald-500'
+                                    : 'font-bold text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {row.rawA}
+                              </span>
+                            </div>
+
+                            <div className="col-span-4 text-center text-[11px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-wide">
+                              {row.label}
+                            </div>
+
+                            <div className="col-span-4 flex items-center gap-2.5">
+                              <span
+                                className={`text-sm tabular-nums ${
+                                  row.winner === 'B'
+                                    ? 'font-black text-sky-500'
+                                    : 'font-bold text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {row.rawB}
+                              </span>
+                              <div className="hidden sm:flex flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                {pctB > 0 && (
+                                  <div
+                                    className={`h-full rounded-full ${row.winner === 'B' ? 'bg-sky-500' : 'bg-slate-400/60 dark:bg-slate-600'}`}
+                                    style={{ width: `${pctB}%` }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Head-to-Head Baseball Savant Statcast Percentiles */}
+                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-extrabold text-base flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-rose-500" />
+                          <span>Baseball Savant Statcast Head-to-Head ({compareSavantYear})</span>
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          MLB Percentile Rankings (1–100, Blue = Poor → Red = Elite)
+                        </p>
+                      </div>
+
+                      {savantYearOptions.length > 0 && (
+                        <YearPicker
+                          value={compareSavantYear}
+                          onChange={changeCompareSavantYear}
+                          years={savantYearOptions}
+                          quickYears={savantYearOptions.slice(0, 3)}
+                        />
+                      )}
+                    </div>
+
+                    {savantKeys.length === 0 ? (
+                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
+                        No Baseball Savant Statcast percentiles published for these players in {compareSavantYear}. Try another year (2015+) above.
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {savantKeys.map((sk) => {
+                          const vA = savantMapA.get(sk.key)?.value ?? null;
+                          const vB = savantMapB.get(sk.key)?.value ?? null;
+                          return (
+                            <div key={sk.key} className="grid grid-cols-12 items-center gap-2">
+                              <div className="col-span-4 flex items-center justify-end gap-2">
+                                <div className="flex-1 flex justify-end h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                  {vA !== null && (
+                                    <div className={`h-full rounded-full ${getPctBar(vA)}`} style={{ width: `${Math.max(5, vA)}%` }} />
+                                  )}
+                                </div>
+                                <span className={`w-8 text-center py-0.5 rounded-full text-[11px] font-black tabular-nums shrink-0 ${getPctPill(vA)}`}>
+                                  {vA ?? '—'}
+                                </span>
+                              </div>
+
+                              <div className="col-span-4 text-center text-[11px] font-bold text-slate-500 dark:text-slate-300 truncate">
+                                {sk.label}
+                              </div>
+
+                              <div className="col-span-4 flex items-center gap-2">
+                                <span className={`w-8 text-center py-0.5 rounded-full text-[11px] font-black tabular-nums shrink-0 ${getPctPill(vB)}`}>
+                                  {vB ?? '—'}
+                                </span>
+                                <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                  {vB !== null && (
+                                    <div className={`h-full rounded-full ${getPctBar(vB)}`} style={{ width: `${Math.max(5, vB)}%` }} />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })() : selectedPlayer ? (() => {
           const teamInfo = getTeamInfo(playerStats?.currentTeamAbbr || selectedPlayer.teamAbbr);
           const groupKey = profileStatGroup === 'pitching' ? 'pitching' : 'hitting';
           const isPitchView = groupKey === 'pitching';
@@ -1368,6 +2396,16 @@ export default function App() {
                 </button>
 
                 <div className="flex items-center gap-2">
+                  {playerStats?.id && (
+                    <button
+                      onClick={() => openCompareView(playerStats)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm transition"
+                      title="Compare this player side-by-side with another MLB player"
+                    >
+                      <Scale className="w-3.5 h-3.5" />
+                      <span>Compare</span>
+                    </button>
+                  )}
                   <button
                     onClick={copyShareUrl}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-500 transition"
@@ -2867,12 +3905,7 @@ export default function App() {
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
-                  <input
-                    type="date"
-                    value={scoreDate}
-                    onChange={(e) => e.target.value && setScoreDate(e.target.value)}
-                    className="px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
-                  />
+                  <DatePickerPopover value={scoreDate} onChange={setScoreDate} />
                   <button
                     onClick={() => setScoreDate((d) => shiftDateStr(d, 1))}
                     className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
@@ -3285,17 +4318,7 @@ export default function App() {
                 <h2 className="text-xl font-extrabold">30-Team Clubhouse &amp; Transaction Hub</h2>
                 <p className="text-xs text-slate-500">Live roster, Injured List, depth chart &amp; offseason moves</p>
               </div>
-              <select
-                value={hubTeam}
-                onChange={(e) => setHubTeam(e.target.value)}
-                className="px-3.5 py-2 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
-              >
-                {MLB_TEAMS.map((t) => (
-                  <option key={t.abbr} value={t.abbr}>
-                    {t.name} ({t.abbr})
-                  </option>
-                ))}
-              </select>
+              <TeamDropdown value={hubTeam} onChange={setHubTeam} />
             </div>
 
             {(() => {
@@ -3956,7 +4979,7 @@ export default function App() {
           return (
             <button
               key={item.id}
-              onClick={() => { setSelectedPlayer(null); setActiveTab(item.id); }}
+              onClick={() => { setSelectedPlayer(null); setCompareOpen(false); setActiveTab(item.id); }}
               className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${
                 active ? 'text-sky-500' : 'text-slate-400'
               }`}
