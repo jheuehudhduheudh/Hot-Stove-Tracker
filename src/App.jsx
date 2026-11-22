@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  RefreshCw, Sun, Moon, Search, Filter, Download, Lock, Unlock,
+  RefreshCw, Sun, Moon, Search, Filter, Download, ArrowLeft, Zap,
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
-  Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database,
+  X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
   ChevronLeft, ChevronRight, Award, Shield, Bookmark
 } from 'lucide-react';
@@ -236,14 +236,22 @@ export default function App() {
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
 
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [editingTx, setEditingTx] = useState(null);
-  const [newMoveModalOpen, setNewMoveModalOpen] = useState(false);
+  // Full Player Profile sub-tab / group / Savant year state
+  const [profileSubTab, setProfileSubTab] = useState('overview');
+  const [profileStatGroup, setProfileStatGroup] = useState('hitting');
+  const [savantYear, setSavantYear] = useState('2026');
+  const [loadingSavant, setLoadingSavant] = useState(false);
+
+  // Live Box Score Modal state
+  const [selectedGamePk, setSelectedGamePk] = useState(null);
+  const [boxScore, setBoxScore] = useState(null);
+  const [loadingBoxScore, setLoadingBoxScore] = useState(false);
+  const [boxScoreTeamTab, setBoxScoreTeamTab] = useState('away');
 
   const openTeamHub = (abbr) => {
     if (!abbr || abbr === 'MLB') return;
+    setSelectedPlayer(null);
+    setSelectedGamePk(null);
     setHubTeam(abbr);
     setActiveTab('teamHub');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -262,19 +270,63 @@ export default function App() {
 
   const openPlayerModal = async (playerId, playerName, teamAbbr) => {
     if (!playerId) return;
+    setSelectedGamePk(null);
     setSelectedPlayer({ playerId, playerName, teamAbbr });
+    setProfileSubTab('overview');
     setPlayerStats(null);
     setLoadingPlayerStats(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
       const res = await fetch(`/api/player?id=${playerId}`);
       if (res.ok) {
         const data = await res.json();
         setPlayerStats(data);
+        setProfileStatGroup(data.isPitcher ? 'pitching' : 'hitting');
+        if (data?.savant?.year) setSavantYear(String(data.savant.year));
       }
     } catch {
       // Leave null if unreachable
     } finally {
       setLoadingPlayerStats(false);
+    }
+  };
+
+  const changeSavantYear = async (yr, groupOverride = null) => {
+    if (!selectedPlayer?.playerId) return;
+    const grp = groupOverride || profileStatGroup;
+    setSavantYear(String(yr));
+    setLoadingSavant(true);
+    try {
+      const res = await fetch(
+        `/api/player?id=${selectedPlayer.playerId}&savantYear=${encodeURIComponent(yr)}&savantGroup=${encodeURIComponent(grp)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setPlayerStats(data);
+      }
+    } catch {
+      // Keep existing stats
+    } finally {
+      setLoadingSavant(false);
+    }
+  };
+
+  const openBoxScore = async (gamePk) => {
+    if (!gamePk) return;
+    setSelectedGamePk(gamePk);
+    setBoxScore(null);
+    setBoxScoreTeamTab('away');
+    setLoadingBoxScore(true);
+    try {
+      const res = await fetch(`/api/season?type=boxscore&gamePk=${gamePk}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBoxScore(data);
+      }
+    } catch {
+      setBoxScore(null);
+    } finally {
+      setLoadingBoxScore(false);
     }
   };
 
@@ -662,79 +714,6 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleAdminSaveEdit = async (e) => {
-    e.preventDefault();
-    if (!editingTx) return;
-    const updates = {
-      status: editingTx.status,
-      contract_years: editingTx.contract_years ? Number(editingTx.contract_years) : null,
-      total_value_millions: editingTx.total_value_millions ? Number(editingTx.total_value_millions) : null,
-      aav_millions:
-        editingTx.contract_years && editingTx.total_value_millions
-          ? Number((Number(editingTx.total_value_millions) / Number(editingTx.contract_years)).toFixed(2))
-          : null,
-      contract_notes: editingTx.contract_notes,
-    };
-
-    try {
-      const res = await fetch('/api/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ action: 'update', payload: { id: editingTx.id, updates } }),
-      });
-      if (res.ok) {
-        await fetchTransactions(false);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setSyncNotice(errData.error || 'Admin update failed');
-      }
-    } catch (err) {
-      setSyncNotice(`Admin update error: ${err.message}`);
-    }
-    setEditingTx(null);
-  };
-
-  const handleCreateMove = async (e) => {
-    e.preventDefault();
-    const form = new FormData(e.target);
-    const years = form.get('years') ? Number(form.get('years')) : null;
-    const total = form.get('total') ? Number(form.get('total')) : null;
-    const newTx = {
-      status: form.get('status'),
-      move_type: form.get('move_type'),
-      is_major_league: true,
-      headline: form.get('headline'),
-      source_name: form.get('status') === 'OFFICIAL' ? 'MLB.com Official' : 'Insider Report',
-      reported_at: new Date().toISOString(),
-      player_name: form.get('player_name'),
-      position: form.get('position') || 'MLB',
-      from_team: form.get('from_team') || null,
-      to_team: form.get('to_team'),
-      stat_line: form.get('stat_line') || '',
-      contract_years: years,
-      total_value_millions: total,
-      aav_millions: years && total ? Number((total / years).toFixed(2)) : null,
-      contract_notes: form.get('notes') || '',
-    };
-
-    try {
-      const res = await fetch('/api/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({ action: 'create', payload: newTx }),
-      });
-      if (res.ok) {
-        await fetchTransactions(false);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setSyncNotice(errData.error || 'Admin create failed');
-      }
-    } catch (err) {
-      setSyncNotice(`Admin create error: ${err.message}`);
-    }
-    setNewMoveModalOpen(false);
-  };
-
   const formatMinutesAgo = (iso) => {
     if (!iso) return 'Never synced';
     const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
@@ -796,7 +775,7 @@ export default function App() {
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => { setSelectedPlayer(null); setActiveTab(tab.id); }}
                 className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold transition whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
@@ -839,17 +818,7 @@ export default function App() {
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
 
-            <button
-              onClick={() => (isAdmin ? setIsAdmin(false) : setAdminModalOpen(true))}
-              aria-label="Admin Mode"
-              className={`p-2 rounded-xl border transition ${
-                isAdmin
-                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-500'
-                  : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500'
-              }`}
-            >
-              {isAdmin ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-            </button>
+
           </div>
         </div>
       </header>
@@ -867,20 +836,669 @@ export default function App() {
       )}
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6">
-        {isAdmin && (
-          <div className="mb-5 p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-              <Unlock className="w-4 h-4" />
-              <span>Admin Mode Active — Click Edit on any card or post a manual breaking move.</span>
+        {/* FULL PLAYER PROFILE VIEW */}
+        {selectedPlayer ? (() => {
+          const teamInfo = getTeamInfo(playerStats?.currentTeamAbbr || selectedPlayer.teamAbbr);
+          const groupKey = profileStatGroup === 'pitching' ? 'pitching' : 'hitting';
+          const isPitchView = groupKey === 'pitching';
+          const regBlock = playerStats?.[groupKey] || { seasons: playerStats?.seasons || [], career: playerStats?.career || null };
+          const postBlock = playerStats?.postseason?.[groupKey] || { seasons: [], career: null };
+          const splitRows = playerStats?.splits?.[groupKey] || [];
+          const latestSeasonRow = regBlock.seasons?.[0] || null;
+          const careerStat = regBlock.career;
+          const savant = playerStats?.savant;
+
+          const getPctBarColor = (val) => {
+            if (val >= 90) return 'bg-rose-600';
+            if (val >= 70) return 'bg-orange-500';
+            if (val >= 45) return 'bg-slate-400 dark:bg-slate-500';
+            if (val >= 25) return 'bg-sky-500';
+            return 'bg-blue-600';
+          };
+
+          const getPctBadgeColor = (val) => {
+            if (val >= 90) return 'bg-rose-600 text-white';
+            if (val >= 70) return 'bg-orange-500 text-white';
+            if (val >= 45) return 'bg-slate-500 text-white';
+            if (val >= 25) return 'bg-sky-600 text-white';
+            return 'bg-blue-700 text-white';
+          };
+
+          const savantYears = (regBlock.seasons || [])
+            .map((s) => Number(s.season))
+            .filter((y, i, arr) => Number.isFinite(y) && y >= 2015 && arr.indexOf(y) === i)
+            .slice(0, 6);
+
+          return (
+            <div className="space-y-5">
+              {/* Top Back Navigation */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  onClick={() => setSelectedPlayer(null)}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                >
+                  <ArrowLeft className="w-4 h-4 text-sky-500" />
+                  <span>Back to Tracker</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {playerStats?.isTwoWay && (
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                      {[
+                        { id: 'hitting', label: 'Hitting' },
+                        { id: 'pitching', label: 'Pitching' },
+                      ].map((g) => (
+                        <button
+                          key={g.id}
+                          onClick={() => {
+                            setProfileStatGroup(g.id);
+                            changeSavantYear(savantYear, g.id);
+                          }}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                            profileStatGroup === g.id
+                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                              : 'text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {playerStats?.id && (
+                    <button
+                      onClick={(e) => toggleWatchlist(playerStats.id, playerStats.fullName, e)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition ${
+                        watchlistIds.includes(playerStats.id)
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-500'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-amber-400'
+                      }`}
+                    >
+                      <Star className={`w-3.5 h-3.5 ${watchlistIds.includes(playerStats.id) ? 'fill-current' : ''}`} />
+                      <span>{watchlistIds.includes(playerStats.id) ? 'Watchlisted' : 'Watchlist'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Hero Player Bio Banner */}
+              <div
+                className="relative overflow-hidden p-6 rounded-2xl text-white shadow-lg"
+                style={{ backgroundColor: teamInfo.color }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/25 to-transparent" />
+                <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-5">
+                  <div className="flex items-center gap-4">
+                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center">
+                      <img
+                        src={`https://midfield.mlbstatic.com/v1/people/${selectedPlayer.playerId}/spots/180`}
+                        alt={playerStats?.fullName || selectedPlayer.playerName}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {playerStats?.primaryNumber && (
+                          <span className="px-2 py-0.5 rounded-md bg-white/20 text-xs font-black">
+                            #{playerStats.primaryNumber}
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded-md bg-black/30 text-xs font-bold">
+                          {playerStats?.positionName || playerStats?.position || 'MLB'}
+                        </span>
+                        {playerStats?.currentTeamAbbr ? (
+                          <button
+                            onClick={() => openTeamHub(playerStats.currentTeamAbbr)}
+                            className="px-2 py-0.5 rounded-md bg-white text-slate-900 text-xs font-black hover:opacity-90"
+                          >
+                            {playerStats.currentTeamName}
+                          </button>
+                        ) : (
+                          playerStats?.currentTeamName && (
+                            <span className="px-2 py-0.5 rounded-md bg-black/30 text-xs font-bold">
+                              {playerStats.currentTeamName}
+                            </span>
+                          )
+                        )}
+                      </div>
+                      <h2 className="text-2xl sm:text-3xl font-black mt-1">
+                        {playerStats?.fullName || selectedPlayer.playerName}
+                      </h2>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/90 font-semibold mt-1.5">
+                        {playerStats?.age && <span>Age {playerStats.age}</span>}
+                        {playerStats?.bats && playerStats?.throws && (
+                          <span>B/T: {playerStats.bats}/{playerStats.throws}</span>
+                        )}
+                        {playerStats?.height && (
+                          <span>{playerStats.height} • {playerStats.weight} lbs</span>
+                        )}
+                        {playerStats?.mlbDebutDate && (
+                          <span>MLB Debut: {playerStats.mlbDebutDate}</span>
+                        )}
+                        {playerStats?.birthPlace && <span>From: {playerStats.birthPlace}</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {playerStats?.links && (
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <a
+                        href={playerStats.links.mlb}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                      >
+                        MLB.com <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <a
+                        href={playerStats.links.savant}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                      >
+                        Baseball Savant <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <a
+                        href={playerStats.links.bref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                      >
+                        Baseball-Ref <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {loadingPlayerStats ? (
+                <div className="p-12 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
+                  Loading full MLB career stats, splits, postseason history &amp; Baseball Savant Statcast profile...
+                </div>
+              ) : !playerStats ? (
+                <div className="p-12 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
+                  Unable to load profile for this player right now.
+                </div>
+              ) : (
+                <>
+                  {/* Profile Sub-Navigation Tabs */}
+                  <div className="flex flex-wrap items-center gap-1.5 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 w-fit">
+                    {[
+                      { id: 'overview', label: 'Overview & Statcast' },
+                      { id: 'seasons', label: `Year-by-Year (${regBlock.seasons.length})` },
+                      { id: 'postseason', label: `Postseason (${postBlock.seasons.length})` },
+                      { id: 'splits', label: `Splits (${playerStats.splits?.season || ''})` },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => setProfileSubTab(t.id)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
+                          profileSubTab === t.id
+                            ? 'bg-sky-600 text-white shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* SUB-TAB 1: Overview & Baseball Savant */}
+                  {profileSubTab === 'overview' && (
+                    <div className="space-y-5">
+                      {/* Career & Latest Season Highlight Cards */}
+                      {careerStat && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                          {(isPitchView
+                            ? [
+                                { label: 'Career W-L', val: `${careerStat.wins ?? 0}-${careerStat.losses ?? 0}` },
+                                { label: 'Career ERA', val: careerStat.era ?? '—', accent: true },
+                                { label: 'Career WHIP', val: careerStat.whip ?? '—' },
+                                { label: 'Career IP', val: careerStat.inningsPitched ?? '0.0' },
+                                { label: 'Career SO', val: careerStat.strikeOuts ?? 0 },
+                                { label: 'Career SV', val: careerStat.saves ?? 0 },
+                              ]
+                            : [
+                                { label: 'Career AVG', val: careerStat.avg ?? '—' },
+                                { label: 'Career OPS', val: careerStat.ops ?? '—', accent: true },
+                                { label: 'Career HR', val: careerStat.homeRuns ?? 0 },
+                                { label: 'Career RBI', val: careerStat.rbi ?? 0 },
+                                { label: 'Career Hits', val: careerStat.hits ?? 0 },
+                                { label: 'Career SB', val: careerStat.stolenBases ?? 0 },
+                              ]
+                          ).map((card, i) => (
+                            <div
+                              key={i}
+                              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                            >
+                              <div className="text-[11px] font-bold text-slate-400 uppercase">{card.label}</div>
+                              <div className={`text-xl font-black mt-0.5 ${card.accent ? 'text-sky-500' : ''}`}>
+                                {card.val}
+                              </div>
+                              {latestSeasonRow && (
+                                <div className="text-[10px] text-slate-500 mt-1">
+                                  {latestSeasonRow.season}:{' '}
+                                  {isPitchView
+                                    ? i === 0
+                                      ? `${latestSeasonRow.stat.wins ?? 0}-${latestSeasonRow.stat.losses ?? 0}`
+                                      : i === 1
+                                      ? latestSeasonRow.stat.era ?? '—'
+                                      : i === 2
+                                      ? latestSeasonRow.stat.whip ?? '—'
+                                      : i === 3
+                                      ? latestSeasonRow.stat.inningsPitched ?? '0.0'
+                                      : i === 4
+                                      ? latestSeasonRow.stat.strikeOuts ?? 0
+                                      : latestSeasonRow.stat.saves ?? 0
+                                    : i === 0
+                                    ? latestSeasonRow.stat.avg ?? '—'
+                                    : i === 1
+                                    ? latestSeasonRow.stat.ops ?? '—'
+                                    : i === 2
+                                    ? latestSeasonRow.stat.homeRuns ?? 0
+                                    : i === 3
+                                    ? latestSeasonRow.stat.rbi ?? 0
+                                    : i === 4
+                                    ? latestSeasonRow.stat.hits ?? 0
+                                    : latestSeasonRow.stat.stolenBases ?? 0}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Baseball Savant Statcast Section (Conditional + Graceful Fallback) */}
+                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="font-extrabold text-base flex items-center gap-2">
+                              <Zap className="w-4 h-4 text-rose-500" />
+                              <span>Baseball Savant Statcast Profile</span>
+                            </h3>
+                            <p className="text-xs text-slate-500">
+                              Percentile rankings (1–100, Blue = Poor → Red = Elite) &amp; Expected Stats
+                            </p>
+                          </div>
+
+                          {savantYears.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                              {savantYears.map((yr) => (
+                                <button
+                                  key={yr}
+                                  onClick={() => changeSavantYear(yr)}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                                    String(savantYear) === String(yr)
+                                      ? 'bg-white dark:bg-slate-900 text-rose-500 shadow-sm'
+                                      : 'text-slate-600 dark:text-slate-300'
+                                  }`}
+                                >
+                                  {yr}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {loadingSavant ? (
+                          <div className="py-8 text-center text-xs text-slate-400">
+                            Loading {savantYear} Baseball Savant Statcast percentiles...
+                          </div>
+                        ) : !savant?.available ? (
+                          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+                            <span>
+                              {savant?.reason || `No Baseball Savant Statcast percentiles published for ${savantYear} (requires Statcast era 2015+ and minimum PA/IP).`}
+                            </span>
+                            {playerStats.links?.savant && (
+                              <a
+                                href={playerStats.links.savant}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-bold text-sky-500 hover:underline inline-flex items-center gap-1"
+                              >
+                                View on Baseball Savant <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                            {/* Percentile Sliders */}
+                            {savant.percentiles?.length > 0 && (
+                              <div className="lg:col-span-7 space-y-2.5">
+                                <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                                  {savant.year} MLB Percentile Rankings
+                                </div>
+                                <div className="space-y-2">
+                                  {savant.percentiles.map((m) => (
+                                    <div key={m.key} className="flex items-center gap-3">
+                                      <span className="w-28 text-xs font-bold text-slate-600 dark:text-slate-300 truncate">
+                                        {m.label}
+                                      </span>
+                                      <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
+                                        <div
+                                          className={`h-full rounded-full ${getPctBarColor(m.value)}`}
+                                          style={{ width: `${Math.max(4, m.value)}%` }}
+                                        />
+                                      </div>
+                                      <span
+                                        className={`w-8 text-center py-0.5 rounded-full text-[11px] font-black shrink-0 ${getPctBadgeColor(m.value)}`}
+                                      >
+                                        {m.value}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Actual vs Expected Stats */}
+                            {savant.expected && (
+                              <div className={`${savant.percentiles?.length > 0 ? 'lg:col-span-5' : 'lg:col-span-12'} space-y-2.5`}>
+                                <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                                  {savant.year} Actual vs. Expected (Statcast)
+                                </div>
+                                <div className="grid grid-cols-2 gap-2.5">
+                                  {savant.expected.xera && (
+                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                      <div className="text-[11px] font-bold text-slate-400">ERA vs xERA</div>
+                                      <div className="text-base font-black mt-0.5">
+                                        {savant.expected.era || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
+                                        <span className="text-rose-500">{savant.expected.xera}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {savant.expected.xba && (
+                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                      <div className="text-[11px] font-bold text-slate-400">BA vs xBA</div>
+                                      <div className="text-base font-black mt-0.5">
+                                        {savant.expected.ba || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
+                                        <span className="text-sky-500">{savant.expected.xba}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {savant.expected.xslg && (
+                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                      <div className="text-[11px] font-bold text-slate-400">SLG vs xSLG</div>
+                                      <div className="text-base font-black mt-0.5">
+                                        {savant.expected.slg || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
+                                        <span className="text-sky-500">{savant.expected.xslg}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {savant.expected.xwoba && (
+                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                      <div className="text-[11px] font-bold text-slate-400">wOBA vs xwOBA</div>
+                                      <div className="text-base font-black mt-0.5">
+                                        {savant.expected.woba || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
+                                        <span className="text-rose-500">{savant.expected.xwoba}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                {savant.expected.pa && (
+                                  <p className="text-[11px] text-slate-400">
+                                    Sample: {savant.expected.pa} PA / {savant.expected.bip ?? 0} Batted Balls in Play
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 2 & 3: Regular Season or Postseason Full Year-by-Year Table */}
+                  {(profileSubTab === 'seasons' || profileSubTab === 'postseason') && (() => {
+                    const activeSet = profileSubTab === 'postseason' ? postBlock : regBlock;
+                    return (
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                        <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <h3 className="font-extrabold text-sm">
+                            {profileSubTab === 'postseason' ? 'MLB Postseason' : 'MLB Regular Season'} {isPitchView ? 'Pitching' : 'Batting'} Stats
+                          </h3>
+                          <span className="text-xs text-slate-400">{activeSet.seasons.length} Seasons</span>
+                        </div>
+                        {activeSet.seasons.length === 0 ? (
+                          <div className="p-10 text-center text-xs text-slate-400">
+                            No {profileSubTab === 'postseason' ? 'postseason' : 'regular-season'} MLB {isPitchView ? 'pitching' : 'batting'} stats recorded.
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left border-collapse">
+                              <thead>
+                                <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase bg-slate-50/70 dark:bg-slate-950/60">
+                                  <th className="py-2.5 pl-4 pr-3 font-bold">Year</th>
+                                  <th className="py-2.5 pr-3 font-bold">Team</th>
+                                  {isPitchView ? (
+                                    <>
+                                      <th className="py-2.5 px-2 font-bold text-right">W-L</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">ERA</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">G</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">GS</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">SV</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">IP</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">H</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">ER</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">HR</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">BB</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">SO</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">WHIP</th>
+                                      <th className="py-2.5 pr-4 pl-2 font-bold text-right">K/9</th>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <th className="py-2.5 px-2 font-bold text-right">G</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">PA</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">AB</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">R</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">H</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">2B</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">3B</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">HR</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">RBI</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">BB</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">SO</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">SB</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">AVG</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">OBP</th>
+                                      <th className="py-2.5 px-2 font-bold text-right">SLG</th>
+                                      <th className="py-2.5 pr-4 pl-2 font-bold text-right">OPS</th>
+                                    </>
+                                  )}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                                {activeSet.seasons.map((row, i) => (
+                                  <tr
+                                    key={`${row.season}-${i}`}
+                                    className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                                      String(row.team).includes('TM') ? 'bg-sky-500/5 font-semibold' : ''
+                                    }`}
+                                  >
+                                    <td className="py-2.5 pl-4 pr-3 font-extrabold">{row.season}</td>
+                                    <td className="py-2.5 pr-3 font-semibold text-slate-500">{row.team}</td>
+                                    {isPitchView ? (
+                                      <>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.wins ?? 0}-{row.stat.losses ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right font-bold text-sky-600 dark:text-sky-400">{row.stat.era ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.gamesStarted ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.saves ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.inningsPitched ?? '0.0'}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.hits ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.earnedRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.homeRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.baseOnBalls ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right font-bold">{row.stat.strikeOuts ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.whip ?? '—'}</td>
+                                        <td className="py-2.5 pr-4 pl-2 text-right">{row.stat.strikeoutsPer9Inn ?? '—'}</td>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.plateAppearances ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.atBats ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.runs ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.hits ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.doubles ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.triples ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right font-bold">{row.stat.homeRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.rbi ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.baseOnBalls ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.strikeOuts ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.stolenBases ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right font-bold">{row.stat.avg ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.obp ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{row.stat.slg ?? '—'}</td>
+                                        <td className="py-2.5 pr-4 pl-2 text-right font-bold text-sky-600 dark:text-sky-400">{row.stat.ops ?? '—'}</td>
+                                      </>
+                                    )}
+                                  </tr>
+                                ))}
+                                {activeSet.career && (
+                                  <tr className="bg-slate-100/80 dark:bg-slate-800/70 font-extrabold">
+                                    <td className="py-2.5 pl-4 pr-3">Career</td>
+                                    <td className="py-2.5 pr-3 text-slate-500">MLB</td>
+                                    {isPitchView ? (
+                                      <>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.wins ?? 0}-{activeSet.career.losses ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right text-sky-600 dark:text-sky-400">{activeSet.career.era ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.gamesPlayed ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.gamesStarted ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.saves ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.inningsPitched ?? '0.0'}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.hits ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.earnedRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.homeRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.baseOnBalls ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.strikeOuts ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.whip ?? '—'}</td>
+                                        <td className="py-2.5 pr-4 pl-2 text-right">{activeSet.career.strikeoutsPer9Inn ?? '—'}</td>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.gamesPlayed ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.plateAppearances ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.atBats ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.runs ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.hits ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.doubles ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.triples ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.homeRuns ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.rbi ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.baseOnBalls ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.strikeOuts ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.stolenBases ?? 0}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.avg ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.obp ?? '—'}</td>
+                                        <td className="py-2.5 px-2 text-right">{activeSet.career.slg ?? '—'}</td>
+                                        <td className="py-2.5 pr-4 pl-2 text-right text-sky-600 dark:text-sky-400">{activeSet.career.ops ?? '—'}</td>
+                                      </>
+                                    )}
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* SUB-TAB 4: Situational Splits */}
+                  {profileSubTab === 'splits' && (
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                      <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                        <h3 className="font-extrabold text-sm">
+                          {playerStats.splits?.season} Situational Splits (vs L / vs R / Home / Away)
+                        </h3>
+                      </div>
+                      {splitRows.length === 0 ? (
+                        <div className="p-10 text-center text-xs text-slate-400">
+                          No situational split data available for {playerStats.splits?.season}.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase bg-slate-50/70 dark:bg-slate-950/60">
+                                <th className="py-2.5 pl-4 pr-3 font-bold">Split</th>
+                                {isPitchView ? (
+                                  <>
+                                    <th className="py-2.5 px-2 font-bold text-right">IP</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">ERA</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">WHIP</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">AVG</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">OPS</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">HR</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">BB</th>
+                                    <th className="py-2.5 pr-4 pl-2 font-bold text-right">SO</th>
+                                  </>
+                                ) : (
+                                  <>
+                                    <th className="py-2.5 px-2 font-bold text-right">AB</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">H</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">HR</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">RBI</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">BB</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">SO</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">AVG</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">OBP</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">SLG</th>
+                                    <th className="py-2.5 pr-4 pl-2 font-bold text-right">OPS</th>
+                                  </>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                              {splitRows.map((sp, i) => (
+                                <tr key={`${sp.code}-${i}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                  <td className="py-2.5 pl-4 pr-3 font-extrabold">{sp.label}</td>
+                                  {isPitchView ? (
+                                    <>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.inningsPitched ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right font-bold text-sky-600 dark:text-sky-400">{sp.stat.era ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.whip ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.avg ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right font-bold">{sp.stat.ops ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.homeRuns ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.baseOnBalls ?? 0}</td>
+                                      <td className="py-2.5 pr-4 pl-2 text-right">{sp.stat.strikeOuts ?? 0}</td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.atBats ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.hits ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right font-bold">{sp.stat.homeRuns ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.rbi ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.baseOnBalls ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.strikeOuts ?? 0}</td>
+                                      <td className="py-2.5 px-2 text-right font-bold">{sp.stat.avg ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.obp ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.slg ?? '—'}</td>
+                                      <td className="py-2.5 pr-4 pl-2 text-right font-bold text-sky-600 dark:text-sky-400">{sp.stat.ops ?? '—'}</td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            <button
-              onClick={() => setNewMoveModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
-            >
-              <Plus className="w-4 h-4" /> Post Breaking Move
-            </button>
-          </div>
-        )}
+          );
+        })() : (
+        <>
+
 
         {activeTab === 'feed' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -1203,14 +1821,7 @@ export default function App() {
                               )}
                               <span>•</span>
                               <span>{new Date(tx.reported_at).toLocaleDateString()}</span>
-                              {isAdmin && (
-                                <button
-                                  onClick={() => setEditingTx(tx)}
-                                  className="ml-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-sky-500 font-semibold"
-                                >
-                                  <Edit3 className="w-3 h-3" /> Edit
-                                </button>
-                              )}
+
                             </div>
                           </div>
 
@@ -1769,7 +2380,8 @@ export default function App() {
                     return (
                       <div
                         key={g.gamePk}
-                        className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3"
+                        onClick={() => openBoxScore(g.gamePk)}
+                        className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/60 cursor-pointer shadow-sm space-y-3 transition group"
                       >
                         <div className="flex items-center justify-between text-[11px] font-bold">
                           <span
@@ -1794,7 +2406,10 @@ export default function App() {
                             <div key={idx} className="flex items-center justify-between">
                               <button
                                 type="button"
-                                onClick={() => openTeamHub(info.abbr)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openTeamHub(info.abbr);
+                                }}
                                 className="flex items-center gap-2.5 text-left hover:opacity-85"
                               >
                                 <span
@@ -1821,20 +2436,25 @@ export default function App() {
                           ))}
                         </div>
 
-                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 truncate">
-                          {isFinal && g.decisions?.winner ? (
-                            <span>
-                              W: <strong className="text-slate-700 dark:text-slate-200">{g.decisions.winner}</strong>
-                              {g.decisions.loser && ` • L: ${g.decisions.loser}`}
-                              {g.decisions.save && ` • SV: ${g.decisions.save}`}
-                            </span>
-                          ) : (g.away.probablePitcher || g.home.probablePitcher) ? (
-                            <span>
-                              Probables: {g.away.probablePitcher || 'TBD'} vs {g.home.probablePitcher || 'TBD'}
-                            </span>
-                          ) : (
-                            <span>{g.status}</span>
-                          )}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <div className="truncate">
+                            {isFinal && g.decisions?.winner ? (
+                              <span>
+                                W: <strong className="text-slate-700 dark:text-slate-200">{g.decisions.winner}</strong>
+                                {g.decisions.loser && ` • L: ${g.decisions.loser}`}
+                                {g.decisions.save && ` • SV: ${g.decisions.save}`}
+                              </span>
+                            ) : (g.away.probablePitcher || g.home.probablePitcher) ? (
+                              <span>
+                                Probables: {g.away.probablePitcher || 'TBD'} vs {g.home.probablePitcher || 'TBD'}
+                              </span>
+                            ) : (
+                              <span>{g.status}</span>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-extrabold text-sky-500 group-hover:underline shrink-0">
+                            Box Score →
+                          </span>
                         </div>
                       </div>
                     );
@@ -2758,6 +3378,8 @@ export default function App() {
             </div>
           );
         })()}
+        </>
+        )}
       </main>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
@@ -2774,7 +3396,7 @@ export default function App() {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => { setSelectedPlayer(null); setActiveTab(item.id); }}
               className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${
                 active ? 'text-sky-500' : 'text-slate-400'
               }`}
@@ -2890,178 +3512,301 @@ export default function App() {
         </div>
       )}
 
-      {/* Clickable Player Year-by-Year Stats Modal */}
-      {selectedPlayer && (
+      {/* Clickable Live MLB Box Score Modal */}
+      {selectedGamePk && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setSelectedPlayer(null)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
+          onClick={() => setSelectedGamePk(null)}
         >
           <div
-            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
+            className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <PlayerAvatar
-                  playerId={selectedPlayer.playerId}
-                  playerName={playerStats?.fullName || selectedPlayer.playerName}
-                  teamAbbr={selectedPlayer.teamAbbr}
-                  size="lg"
-                />
-                <div>
-                  <h3 className="text-lg sm:text-xl font-black">
-                    {playerStats?.fullName || selectedPlayer.playerName}
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
-                    {playerStats?.position && (
-                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200">
-                        {playerStats.position}
-                      </span>
-                    )}
-                    {playerStats?.age && <span>Age {playerStats.age}</span>}
-                    {playerStats?.bats && playerStats?.throws && (
-                      <span>• B/T: {playerStats.bats}/{playerStats.throws}</span>
-                    )}
-                    {playerStats?.height && (
-                      <span>• {playerStats.height} / {playerStats.weight} lbs</span>
-                    )}
-                  </div>
-                  {playerStats?.links && (
-                    <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <a
-                        href={playerStats.links.mlb}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-400 hover:bg-sky-500/25"
-                      >
-                        MLB.com <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <a
-                        href={playerStats.links.savant}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25"
-                      >
-                        Baseball Savant <ExternalLink className="w-3 h-3" />
-                      </a>
-                      <a
-                        href={playerStats.links.bref}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25"
-                      >
-                        Baseball-Ref <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  )}
-                </div>
+            <div className="sticky top-0 z-10 px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-black">
+                  {boxScore ? `${boxScore.away.abbr} @ ${boxScore.home.abbr} — Box Score` : 'Loading MLB Box Score...'}
+                </h3>
+                {boxScore && (
+                  <p className="text-xs text-slate-500">
+                    {boxScore.status}{boxScore.venue ? ` • ${boxScore.venue}` : ''}
+                  </p>
+                )}
               </div>
               <button
-                onClick={() => setSelectedPlayer(null)}
+                onClick={() => setSelectedGamePk(null)}
                 className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5">
-              {loadingPlayerStats ? (
-                <div className="text-center py-10 text-sm text-slate-400">
-                  Loading MLB year-by-year stats...
+            <div className="p-5 space-y-5">
+              {loadingBoxScore ? (
+                <div className="py-12 text-center text-sm text-slate-400">
+                  Fetching live MLB box score &amp; inning-by-inning linescore...
                 </div>
-              ) : !playerStats || playerStats.seasons.length === 0 ? (
-                <div className="text-center py-10 text-sm text-slate-400">
-                  No official MLB regular-season stats found for this player.
+              ) : !boxScore ? (
+                <div className="py-12 text-center text-sm text-slate-400">
+                  Box score data is not available for this game yet.
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
-                        <th className="py-2 pr-3 font-bold">Year</th>
-                        <th className="py-2 pr-3 font-bold">Team</th>
-                        {playerStats.isPitcher ? (
-                          <>
-                            <th className="py-2 px-2 font-bold text-right">W-L</th>
-                            <th className="py-2 px-2 font-bold text-right">ERA</th>
-                            <th className="py-2 px-2 font-bold text-right">G</th>
-                            <th className="py-2 px-2 font-bold text-right">IP</th>
-                            <th className="py-2 px-2 font-bold text-right">SO</th>
-                            <th className="py-2 px-2 font-bold text-right">WHIP</th>
-                            <th className="py-2 pl-2 font-bold text-right">SV</th>
-                          </>
+              ) : (() => {
+                const awayInfo = getTeamInfo(boxScore.away.abbr);
+                const homeInfo = getTeamInfo(boxScore.home.abbr);
+                const ls = boxScore.linescore;
+                const activeSide = boxScoreTeamTab === 'home' ? boxScore.home : boxScore.away;
+                const activeSideInfo = boxScoreTeamTab === 'home' ? homeInfo : awayInfo;
+                const inningCount = Math.max(9, ls.innings?.length || 0);
+                const inningNums = Array.from({ length: inningCount }, (_, i) => i + 1);
+
+                return (
+                  <>
+                    {/* Scoreboard Banner + Live Count/Bases */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                      <div className="md:col-span-8 space-y-2">
+                        {[
+                          { info: awayInfo, runs: ls.away.runs, hits: ls.away.hits, err: ls.away.errors },
+                          { info: homeInfo, runs: ls.home.runs, hits: ls.home.hits, err: ls.home.errors },
+                        ].map((row, idx) => (
+                          <div key={idx} className="flex items-center justify-between">
+                            <button
+                              onClick={() => openTeamHub(row.info.abbr)}
+                              className="flex items-center gap-2.5 hover:opacity-85"
+                            >
+                              <span
+                                className="w-11 text-center py-0.5 rounded text-xs font-black text-white"
+                                style={{ backgroundColor: row.info.color }}
+                              >
+                                {row.info.abbr}
+                              </span>
+                              <span className="font-extrabold text-sm sm:text-base">{row.info.name}</span>
+                            </button>
+                            <div className="flex items-center gap-4">
+                              <span className="text-2xl font-black">{row.runs}</span>
+                              <span className="text-xs text-slate-400 w-16 text-right">
+                                {row.hits} H • {row.err} E
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="md:col-span-4 md:border-l border-slate-200 dark:border-slate-800 md:pl-4 flex items-center justify-between md:justify-center gap-4">
+                        {boxScore.abstractState === 'Live' ? (
+                          <div className="flex items-center gap-4">
+                            <div className="relative w-12 h-12">
+                              <div className={`w-3.5 h-3.5 rotate-45 absolute top-0 left-1/2 -translate-x-1/2 border ${ls.onSecond ? 'bg-amber-400 border-amber-400' : 'border-slate-400'}`} />
+                              <div className={`w-3.5 h-3.5 rotate-45 absolute top-1/2 right-0 -translate-y-1/2 border ${ls.onFirst ? 'bg-amber-400 border-amber-400' : 'border-slate-400'}`} />
+                              <div className={`w-3.5 h-3.5 rotate-45 absolute top-1/2 left-0 -translate-y-1/2 border ${ls.onThird ? 'bg-amber-400 border-amber-400' : 'border-slate-400'}`} />
+                            </div>
+                            <div className="text-xs font-bold space-y-0.5">
+                              <div className="text-rose-500 font-black">{ls.inningHalf} {ls.currentInning}</div>
+                              <div>{ls.balls ?? 0}-{ls.strikes ?? 0} Count</div>
+                              <div>{ls.outs ?? 0} Out{ls.outs === 1 ? '' : 's'}</div>
+                            </div>
+                          </div>
                         ) : (
-                          <>
-                            <th className="py-2 px-2 font-bold text-right">G</th>
-                            <th className="py-2 px-2 font-bold text-right">AB</th>
-                            <th className="py-2 px-2 font-bold text-right">AVG</th>
-                            <th className="py-2 px-2 font-bold text-right">HR</th>
-                            <th className="py-2 px-2 font-bold text-right">RBI</th>
-                            <th className="py-2 px-2 font-bold text-right">SB</th>
-                            <th className="py-2 pl-2 font-bold text-right">OPS</th>
-                          </>
+                          <div className="text-xs space-y-1">
+                            <div className="font-black text-sky-500 uppercase">{boxScore.status}</div>
+                            {boxScore.decisions?.winner && <div>W: <strong>{boxScore.decisions.winner}</strong></div>}
+                            {boxScore.decisions?.loser && <div>L: {boxScore.decisions.loser}</div>}
+                            {boxScore.decisions?.save && <div>SV: {boxScore.decisions.save}</div>}
+                          </div>
                         )}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                      {playerStats.seasons.map((row, i) => (
-                        <tr key={`${row.season}-${i}`} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${String(row.team).includes("TM") ? "bg-sky-500/5 font-semibold" : ""}`}>
-                          <td className="py-2 pr-3 font-extrabold">{row.season}</td>
-                          <td className="py-2 pr-3 font-semibold text-slate-500">{row.team}</td>
-                          {playerStats.isPitcher ? (
-                            <>
-                              <td className="py-2 px-2 text-right">{row.stat.wins ?? 0}-{row.stat.losses ?? 0}</td>
-                              <td className="py-2 px-2 text-right font-bold">{row.stat.era ?? '—'}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.inningsPitched ?? '0.0'}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.strikeOuts ?? 0}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.whip ?? '—'}</td>
-                              <td className="py-2 pl-2 text-right">{row.stat.saves ?? 0}</td>
-                            </>
-                          ) : (
-                            <>
-                              <td className="py-2 px-2 text-right">{row.stat.gamesPlayed ?? 0}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.atBats ?? 0}</td>
-                              <td className="py-2 px-2 text-right font-bold">{row.stat.avg ?? '—'}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.homeRuns ?? 0}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.rbi ?? 0}</td>
-                              <td className="py-2 px-2 text-right">{row.stat.stolenBases ?? 0}</td>
-                              <td className="py-2 pl-2 text-right font-bold text-sky-600 dark:text-sky-400">{row.stat.ops ?? '—'}</td>
-                            </>
-                          )}
-                        </tr>
+                      </div>
+                    </div>
+
+                    {/* Inning-by-Inning Linescore */}
+                    {ls.innings?.length > 0 && (
+                      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                        <table className="w-full text-xs text-center border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400">
+                              <th className="py-2 pl-3 pr-2 text-left font-bold">Team</th>
+                              {inningNums.map((n) => (
+                                <th key={n} className="py-2 px-1.5 font-bold">{n}</th>
+                              ))}
+                              <th className="py-2 px-2 font-black text-slate-700 dark:text-slate-200 border-l border-slate-200 dark:border-slate-800">R</th>
+                              <th className="py-2 px-2 font-bold">H</th>
+                              <th className="py-2 px-2 font-bold">E</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {[
+                              { abbr: awayInfo.abbr, key: 'awayRuns', totals: ls.away },
+                              { abbr: homeInfo.abbr, key: 'homeRuns', totals: ls.home },
+                            ].map((r) => (
+                              <tr key={r.abbr}>
+                                <td className="py-2 pl-3 pr-2 text-left font-black">{r.abbr}</td>
+                                {inningNums.map((n) => {
+                                  const inn = ls.innings.find((x) => x.num === n);
+                                  const val = inn ? inn[r.key] : null;
+                                  return (
+                                    <td key={n} className="py-2 px-1.5 font-semibold text-slate-600 dark:text-slate-300">
+                                      {val !== null && val !== undefined ? val : '·'}
+                                    </td>
+                                  );
+                                })}
+                                <td className="py-2 px-2 font-black text-sky-500 border-l border-slate-200 dark:border-slate-800">{r.totals.runs}</td>
+                                <td className="py-2 px-2 font-bold">{r.totals.hits}</td>
+                                <td className="py-2 px-2">{r.totals.errors}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Away / Home Team Box Score Switcher */}
+                    <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
+                      {[
+                        { id: 'away', label: `${awayInfo.short} Box Score` },
+                        { id: 'home', label: `${homeInfo.short} Box Score` },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setBoxScoreTeamTab(t.id)}
+                          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                            boxScoreTeamTab === t.id
+                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                              : 'text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
                       ))}
-                      {playerStats.career && (
-                        <tr className="bg-slate-100/80 dark:bg-slate-800/70 font-extrabold">
-                          <td className="py-2.5 pr-3">Career</td>
-                          <td className="py-2.5 pr-3 text-slate-500">MLB</td>
-                          {playerStats.isPitcher ? (
-                            <>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.wins ?? 0}-{playerStats.career.losses ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.era ?? '—'}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.gamesPlayed ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.inningsPitched ?? '0.0'}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.strikeOuts ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.whip ?? '—'}</td>
-                              <td className="py-2.5 pl-2 text-right">{playerStats.career.saves ?? 0}</td>
-                            </>
-                          ) : (
-                            <>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.gamesPlayed ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.atBats ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.avg ?? '—'}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.homeRuns ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.rbi ?? 0}</td>
-                              <td className="py-2.5 px-2 text-right">{playerStats.career.stolenBases ?? 0}</td>
-                              <td className="py-2.5 pl-2 text-right text-sky-600 dark:text-sky-400">{playerStats.career.ops ?? '—'}</td>
-                            </>
-                          )}
-                        </tr>
+                    </div>
+
+                    {/* Batting Table */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                        {activeSideInfo.name} Batting (Click any player for full profile)
+                      </h4>
+                      {activeSide.batters.length === 0 ? (
+                        <p className="text-xs text-slate-400">Lineup / batting stats not posted yet.</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                          <table className="w-full text-xs text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
+                                <th className="py-2 pl-3 pr-2 font-bold">Batter</th>
+                                <th className="py-2 px-2 font-bold text-right">AB</th>
+                                <th className="py-2 px-2 font-bold text-right">R</th>
+                                <th className="py-2 px-2 font-bold text-right">H</th>
+                                <th className="py-2 px-2 font-bold text-right">RBI</th>
+                                <th className="py-2 px-2 font-bold text-right">BB</th>
+                                <th className="py-2 px-2 font-bold text-right">SO</th>
+                                <th className="py-2 px-2 font-bold text-right">AVG</th>
+                                <th className="py-2 pr-3 pl-2 font-bold text-right">OPS</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                              {activeSide.batters.map((b, i) => (
+                                <tr
+                                  key={`${b.playerId}-${i}`}
+                                  onClick={() => openPlayerModal(b.playerId, b.fullName, activeSideInfo.abbr)}
+                                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                                >
+                                  <td className={`py-2 pl-3 pr-2 font-bold ${b.isSub ? 'pl-6 text-slate-500' : ''}`}>
+                                    <span className="hover:text-sky-500">{b.fullName}</span>
+                                    <span className="ml-1.5 text-[10px] text-slate-400 font-semibold">{b.position}</span>
+                                    {b.hr > 0 && (
+                                      <span className="ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">
+                                        {b.hr > 1 ? `${b.hr} HR` : 'HR'}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-2 text-right">{b.ab}</td>
+                                  <td className="py-2 px-2 text-right">{b.r}</td>
+                                  <td className="py-2 px-2 text-right font-bold">{b.h}</td>
+                                  <td className="py-2 px-2 text-right">{b.rbi}</td>
+                                  <td className="py-2 px-2 text-right">{b.bb}</td>
+                                  <td className="py-2 px-2 text-right">{b.so}</td>
+                                  <td className="py-2 px-2 text-right text-slate-500">{b.avg}</td>
+                                  <td className="py-2 pr-3 pl-2 text-right text-slate-500">{b.ops}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      {activeSide.battingNotes?.length > 0 && (
+                        <div className="text-[11px] text-slate-500 space-y-0.5 pt-1">
+                          {activeSide.battingNotes.map((n, i) => (
+                            <div key={i}>
+                              <strong className="text-slate-700 dark:text-slate-300">{n.label}:</strong> {n.value}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pitching Table */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                        {activeSideInfo.name} Pitching
+                      </h4>
+                      {activeSide.pitchers.length === 0 ? (
+                        <p className="text-xs text-slate-400">Pitching lines not posted yet.</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                          <table className="w-full text-xs text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
+                                <th className="py-2 pl-3 pr-2 font-bold">Pitcher</th>
+                                <th className="py-2 px-2 font-bold text-right">IP</th>
+                                <th className="py-2 px-2 font-bold text-right">H</th>
+                                <th className="py-2 px-2 font-bold text-right">R</th>
+                                <th className="py-2 px-2 font-bold text-right">ER</th>
+                                <th className="py-2 px-2 font-bold text-right">BB</th>
+                                <th className="py-2 px-2 font-bold text-right">SO</th>
+                                <th className="py-2 px-2 font-bold text-right">HR</th>
+                                <th className="py-2 px-2 font-bold text-right">P-S</th>
+                                <th className="py-2 pr-3 pl-2 font-bold text-right">ERA</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                              {activeSide.pitchers.map((p, i) => (
+                                <tr
+                                  key={`${p.playerId}-${i}`}
+                                  onClick={() => openPlayerModal(p.playerId, p.fullName, activeSideInfo.abbr)}
+                                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                                >
+                                  <td className="py-2 pl-3 pr-2 font-bold">
+                                    <span className="hover:text-sky-500">{p.fullName}</span>
+                                    {p.note && <span className="ml-1.5 text-[10px] text-sky-500 font-bold">{p.note}</span>}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-bold">{p.ip}</td>
+                                  <td className="py-2 px-2 text-right">{p.h}</td>
+                                  <td className="py-2 px-2 text-right">{p.r}</td>
+                                  <td className="py-2 px-2 text-right">{p.er}</td>
+                                  <td className="py-2 px-2 text-right">{p.bb}</td>
+                                  <td className="py-2 px-2 text-right font-bold">{p.so}</td>
+                                  <td className="py-2 px-2 text-right">{p.hr}</td>
+                                  <td className="py-2 px-2 text-right text-slate-500">
+                                    {p.pitches !== null ? `${p.pitches}-${p.strikes ?? 0}` : '—'}
+                                  </td>
+                                  <td className="py-2 pr-3 pl-2 text-right text-slate-500">{p.era}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {boxScore.gameInfo?.length > 0 && (
+                      <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+                        {boxScore.gameInfo.map((gi, i) => (
+                          <span key={i}>
+                            <strong className="text-slate-600 dark:text-slate-300">{gi.label}:</strong> {gi.value}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -3117,165 +3862,6 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {adminModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 p-5 border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-extrabold">Unlock Admin Controls</h3>
-              <button onClick={() => setAdminModalOpen(false)}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <input
-              type="password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              placeholder="Enter ADMIN_PASSWORD"
-              className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent mb-3"
-            />
-            <button
-              onClick={() => {
-                setIsAdmin(true);
-                setAdminModalOpen(false);
-              }}
-              className="w-full py-2 rounded-xl bg-sky-600 text-white text-sm font-bold"
-            >
-              Unlock
-            </button>
-          </div>
-        </div>
-      )}
-
-      {editingTx && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <form
-            onSubmit={handleAdminSaveEdit}
-            className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 p-5 border border-slate-200 dark:border-slate-800 space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold">Edit Transaction</h3>
-              <button type="button" onClick={() => setEditingTx(null)}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <select
-              value={editingTx.status}
-              onChange={(e) => setEditingTx({ ...editingTx, status: e.target.value })}
-              className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-            >
-              <option value="REPORTED">REPORTED</option>
-              <option value="OFFICIAL">OFFICIAL</option>
-              <option value="VOIDED">VOIDED / FELL THROUGH</option>
-            </select>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="number"
-                placeholder="Years"
-                value={editingTx.contract_years || ''}
-                onChange={(e) => setEditingTx({ ...editingTx, contract_years: e.target.value })}
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-              <input
-                type="number"
-                step="0.1"
-                placeholder="Total ($M)"
-                value={editingTx.total_value_millions || ''}
-                onChange={(e) => setEditingTx({ ...editingTx, total_value_millions: e.target.value })}
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-            </div>
-            <input
-              type="text"
-              placeholder="Contract notes (e.g., Opt-out after Year 2)"
-              value={editingTx.contract_notes || ''}
-              onChange={(e) => setEditingTx({ ...editingTx, contract_notes: e.target.value })}
-              className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-            />
-            <button type="submit" className="w-full py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold">
-              Save Changes
-            </button>
-          </form>
-        </div>
-      )}
-
-      {newMoveModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <form
-            onSubmit={handleCreateMove}
-            className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 p-5 border border-slate-200 dark:border-slate-800 space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-400" /> Post Breaking Move
-              </h3>
-              <button type="button" onClick={() => setNewMoveModalOpen(false)}>
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <input
-              name="headline"
-              required
-              placeholder="Headline"
-              className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                name="player_name"
-                required
-                placeholder="Player Name"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-              <input
-                name="to_team"
-                required
-                placeholder="New Team (e.g., TOR)"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                name="status"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-              >
-                <option value="REPORTED">REPORTED</option>
-                <option value="OFFICIAL">OFFICIAL</option>
-              </select>
-              <select
-                name="move_type"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-              >
-                <option value="SIGNING">SIGNING</option>
-                <option value="TRADE">TRADE</option>
-                <option value="EXTENSION">EXTENSION</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                name="years"
-                type="number"
-                placeholder="Years"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-              <input
-                name="total"
-                type="number"
-                step="0.1"
-                placeholder="Total ($M)"
-                className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-              />
-            </div>
-            <input
-              name="notes"
-              placeholder="Notes (e.g., Pending physical)"
-              className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
-            />
-            <button type="submit" className="w-full py-2 rounded-xl bg-sky-600 text-white text-sm font-bold">
-              Publish Move
-            </button>
-          </form>
         </div>
       )}
     </div>
