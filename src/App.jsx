@@ -2,15 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   RefreshCw, Sun, Moon, Search, Filter, Download, Lock, Unlock,
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
-  Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database
+  Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database,
+  ExternalLink, DollarSign, Activity
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import { MLB_TEAMS, DIVISIONS, getTeamInfo } from './data/mlbData';
+import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
   const [imgError, setImgError] = useState(false);
   const team = getTeamInfo(teamAbbr);
-  const initials = (playerName || 'ML')
+  const initials = (playerName || team.abbr || 'ML')
     .split(' ')
     .map((p) => p[0])
     .join('')
@@ -27,7 +28,7 @@ function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
       {playerId && !imgError ? (
         <img
           src={`https://midfield.mlbstatic.com/v1/people/${playerId}/spots/120`}
-          alt={playerName}
+          alt={playerName || 'Player'}
           onError={() => setImgError(true)}
           className="w-full h-full object-cover"
         />
@@ -63,7 +64,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('feed');
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
+  const [faSeason, setFaSeason] = useState(new Date().getFullYear());
   const [loadingFreeAgents, setLoadingFreeAgents] = useState(true);
+  const [faSearch, setFaSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -122,48 +125,26 @@ export default function App() {
         setSyncNotice(`Supabase read error: ${error.message}`);
       }
     }
-
-    const localCached = localStorage.getItem('hst_demo_transactions');
-    if (localCached) {
-      setTransactions(JSON.parse(localCached));
-    } else {
-      setTransactions([]);
-    }
+    setTransactions([]);
     setLoading(false);
   };
 
   const fetchFreeAgents = async () => {
     setLoadingFreeAgents(true);
-    const currentYear = new Date().getFullYear();
-    const seasonsToTry = [currentYear + 1, currentYear];
-
-    for (const season of seasonsToTry) {
-      try {
-        const res = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${season}`);
-        if (!res.ok) continue;
+    try {
+      const res = await fetch('/api/free-agents');
+      if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data?.freeAgents) && data.freeAgents.length > 0) {
-          const mapped = data.freeAgents
-            .filter((fa) => !fa.newTeam)
-            .slice(0, 100)
-            .map((fa) => ({
-              playerId: fa.player?.id,
-              fullName: fa.player?.fullName || 'Unknown Player',
-              position: fa.position?.abbreviation || 'MLB',
-              age: fa.player?.currentAge || '—',
-              lastTeam: getTeamInfo(fa.originalTeam?.name || '').abbr,
-              statLine: `${season} MLB Free Agent`,
-              tier: 'Available',
-            }));
-          setFreeAgents(mapped);
-          setLoadingFreeAgents(false);
-          return;
+        if (Array.isArray(data?.freeAgents)) {
+          setFreeAgents(data.freeAgents);
+          if (data.season) setFaSeason(data.season);
         }
-      } catch {
-        // Try next season fallback
       }
+    } catch {
+      // Leave empty if unreachable
+    } finally {
+      setLoadingFreeAgents(false);
     }
-    setLoadingFreeAgents(false);
   };
 
   useEffect(() => {
@@ -207,7 +188,7 @@ export default function App() {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const hay = `${tx.headline} ${tx.player_name || ''} ${tx.to_team || ''} ${tx.from_team || ''} ${tx.contract_notes || ''}`.toLowerCase();
+        const hay = `${decodeHtml(tx.headline)} ${tx.player_name || ''} ${tx.to_team || ''} ${tx.from_team || ''} ${tx.contract_notes || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -217,23 +198,56 @@ export default function App() {
   const spendingLeaderboard = useMemo(() => {
     const totals = {};
     MLB_TEAMS.forEach((t) => {
-      totals[t.abbr] = { team: t, totalMillions: 0, signingsCount: 0 };
+      totals[t.abbr] = { team: t, totalMillions: 0, signingsCount: 0, totalMoves: 0 };
     });
 
     transactions.forEach((tx) => {
-      if (
-        tx.status !== 'VOIDED' &&
-        (tx.move_type === 'SIGNING' || tx.move_type === 'EXTENSION') &&
-        tx.to_team &&
-        totals[tx.to_team]
-      ) {
-        totals[tx.to_team].totalMillions += Number(tx.total_value_millions || 0);
-        totals[tx.to_team].signingsCount += 1;
+      if (tx.status === 'VOIDED') return;
+      const teamKey = tx.to_team || tx.team_a;
+      if (teamKey && totals[teamKey]) {
+        totals[teamKey].totalMoves += 1;
+        if (tx.move_type === 'SIGNING' || tx.move_type === 'EXTENSION') {
+          totals[teamKey].totalMillions += Number(tx.total_value_millions || 0);
+          totals[teamKey].signingsCount += 1;
+        }
       }
     });
 
-    return Object.values(totals).sort((a, b) => b.totalMillions - a.totalMillions);
+    return Object.values(totals).sort(
+      (a, b) =>
+        b.totalMillions - a.totalMillions ||
+        b.signingsCount - a.signingsCount ||
+        b.totalMoves - a.totalMoves
+    );
   }, [transactions]);
+
+  const leagueStats = useMemo(() => {
+    const totalSpent = spendingLeaderboard.reduce((sum, r) => sum + r.totalMillions, 0);
+    const totalSignings = transactions.filter((t) => t.move_type === 'SIGNING' || t.move_type === 'EXTENSION').length;
+    const totalTrades = transactions.filter((t) => t.move_type === 'TRADE').length;
+    const mostActive = [...spendingLeaderboard].sort((a, b) => b.totalMoves - a.totalMoves)[0];
+    return { totalSpent, totalSignings, totalTrades, mostActive };
+  }, [transactions, spendingLeaderboard]);
+
+  const filteredFreeAgents = useMemo(() => {
+    return freeAgents.filter((fa) => {
+      if (faPositionFilter !== 'ALL') {
+        if (faPositionFilter === 'P') {
+          if (!['P', 'SP', 'RP', 'RHP', 'LHP'].includes(fa.position)) return false;
+        } else if (faPositionFilter === 'OF') {
+          if (!['OF', 'LF', 'CF', 'RF'].includes(fa.position)) return false;
+        } else if (fa.position !== faPositionFilter) {
+          return false;
+        }
+      }
+      if (faSearch.trim()) {
+        const q = faSearch.toLowerCase();
+        const hay = `${fa.fullName} ${fa.lastTeam} ${fa.position} ${fa.statLine}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [freeAgents, faPositionFilter, faSearch]);
 
   const toggleTeam = (abbr) => {
     setSelectedTeams((prev) =>
@@ -271,7 +285,7 @@ export default function App() {
                 t.contract_years || '',
                 t.total_value_millions || '',
                 t.aav_millions || '',
-                `"${(t.headline || '').replace(/"/g, '""')}"`,
+                `"${decodeHtml(t.headline || '').replace(/"/g, '""')}"`,
               ].join(',')
             ),
           ].join('\n');
@@ -372,11 +386,13 @@ export default function App() {
     return ageDays > 14;
   };
 
+  const maxTeamSpend = Math.max(1, ...spendingLeaderboard.map((r) => r.totalMillions));
+
   return (
-    <div className="min-h-screen pb-20 md:pb-10 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
-      <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
+    <div className="min-h-screen pb-20 md:pb-12 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+      <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center text-white shadow">
               <Flame className="w-5 h-5" />
             </div>
@@ -397,7 +413,7 @@ export default function App() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
-                MLB Free Agency &amp; Trade Dashboard • Synced: {formatMinutesAgo(lastSyncedAt)}
+                Official MLB Transactions &amp; Free Agency • Synced: {formatMinutesAgo(lastSyncedAt)}
               </p>
             </div>
           </div>
@@ -405,7 +421,7 @@ export default function App() {
           <nav className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
             {[
               { id: 'feed', label: 'Live Feed' },
-              { id: 'freeAgents', label: 'Best Free Agents' },
+              { id: 'freeAgents', label: `Free Agents (${freeAgents.length})` },
               { id: 'teamHub', label: 'Team Hub' },
               { id: 'leaderboard', label: 'Spending' },
             ].map((tab) => (
@@ -425,9 +441,9 @@ export default function App() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => handleSyncNow(false)}
+              onClick={() => handleSyncNow(true)}
               disabled={syncing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
@@ -460,15 +476,15 @@ export default function App() {
         <div className="bg-sky-500/10 border-b border-sky-500/20 px-4 py-2 text-xs text-center text-sky-700 dark:text-sky-300 flex items-center justify-center gap-3">
           <span>{syncNotice}</span>
           <button
-            onClick={() => handleSyncNow(true)}
-            className="underline font-semibold hover:text-sky-500"
+            onClick={() => setSyncNotice('')}
+            className="text-slate-400 hover:text-slate-200"
           >
-            Force Refresh
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-4 pt-5">
+      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6">
         {isAdmin && (
           <div className="mb-5 p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
@@ -485,465 +501,628 @@ export default function App() {
         )}
 
         {activeTab === 'feed' && (
-          <>
-            <div className="mb-5 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative flex-1 min-w-[200px]">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search player, team, or contract..."
-                    className="w-full pl-9 pr-3 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Main Feed Column */}
+            <div className="lg:col-span-8 xl:col-span-9 space-y-4">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 shadow-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search player, team, or contract..."
+                      className="w-full pl-9 pr-3 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
 
-                <div className="relative hidden md:block">
+                  <div className="relative hidden md:block">
+                    <button
+                      onClick={() => setTeamMenuOpen(!teamMenuOpen)}
+                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                    >
+                      <Filter className="w-4 h-4 text-sky-500" />
+                      <span>
+                        {selectedTeams.length === 0
+                          ? 'All 30 Teams'
+                          : `Teams (${selectedTeams.length})`}
+                      </span>
+                    </button>
+
+                    {teamMenuOpen && (
+                      <div className="absolute right-0 mt-2 w-[420px] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl z-40">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                            Division Presets
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={saveMyTeams}
+                              className="text-xs font-semibold text-sky-500 hover:underline"
+                            >
+                              Save as My Teams
+                            </button>
+                            <button
+                              onClick={() => setSelectedTeams([])}
+                              className="text-xs text-slate-400 hover:text-slate-200"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {DIVISIONS.map((div) => (
+                            <button
+                              key={div}
+                              onClick={() => selectDivision(div)}
+                              className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-sky-500 hover:text-white transition"
+                            >
+                              {div}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-5 gap-1.5 max-h-52 overflow-y-auto">
+                          {MLB_TEAMS.map((t) => {
+                            const active = selectedTeams.includes(t.abbr);
+                            return (
+                              <button
+                                key={t.abbr}
+                                onClick={() => toggleTeam(t.abbr)}
+                                className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
+                                  active
+                                    ? 'bg-sky-600 text-white border-sky-600'
+                                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-400'
+                                }`}
+                              >
+                                {t.abbr}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <button
-                    onClick={() => setTeamMenuOpen(!teamMenuOpen)}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500"
+                    onClick={() => setMobileFilterOpen(true)}
+                    className="md:hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
                   >
                     <Filter className="w-4 h-4 text-sky-500" />
                     <span>
-                      {selectedTeams.length === 0
-                        ? 'All 30 Teams'
-                        : `Teams (${selectedTeams.length})`}
+                      Filters{selectedTeams.length ? ` (${selectedTeams.length})` : ''}
                     </span>
                   </button>
 
-                  {teamMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-[420px] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl z-40">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                          Division Presets
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={saveMyTeams}
-                            className="text-xs font-semibold text-sky-500 hover:underline"
-                          >
-                            Save as My Teams
-                          </button>
-                          <button
-                            onClick={() => setSelectedTeams([])}
-                            className="text-xs text-slate-400 hover:text-slate-200"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mb-3">
-                        {DIVISIONS.map((div) => (
-                          <button
-                            key={div}
-                            onClick={() => selectDivision(div)}
-                            className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-sky-500 hover:text-white transition"
-                          >
-                            {div}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-5 gap-1.5 max-h-52 overflow-y-auto">
-                        {MLB_TEAMS.map((t) => {
-                          const active = selectedTeams.includes(t.abbr);
-                          return (
-                            <button
-                              key={t.abbr}
-                              onClick={() => toggleTeam(t.abbr)}
-                              className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
-                                active
-                                  ? 'bg-sky-600 text-white border-sky-600'
-                                  : 'border-slate-200 dark:border-slate-800 hover:border-slate-400'
-                              }`}
-                            >
-                              {t.abbr}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={majorLeagueOnly}
+                      onChange={(e) => setMajorLeagueOnly(e.target.checked)}
+                      className="rounded text-sky-600 focus:ring-sky-500"
+                    />
+                    <span>MLB Only</span>
+                  </label>
 
-                <button
-                  onClick={() => setMobileFilterOpen(true)}
-                  className="md:hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
-                >
-                  <Filter className="w-4 h-4 text-sky-500" />
-                  <span>
-                    Filters{selectedTeams.length ? ` (${selectedTeams.length})` : ''}
-                  </span>
-                </button>
-
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={majorLeagueOnly}
-                    onChange={(e) => setMajorLeagueOnly(e.target.checked)}
-                    className="rounded text-sky-600 focus:ring-sky-500"
-                  />
-                  <span>Major League Moves Only</span>
-                </label>
-
-                <div className="hidden sm:flex items-center gap-1">
-                  <button
-                    onClick={() => exportData('csv')}
-                    title="Export CSV"
-                    className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500"
-                  >
-                    <Download className="w-3.5 h-3.5" /> CSV
-                  </button>
-                  <button
-                    onClick={() => exportData('json')}
-                    title="Export JSON"
-                    className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500"
-                  >
-                    JSON
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {[
-                    { id: 'ALL', label: 'All Status' },
-                    { id: 'REPORTED', label: 'Sources Say' },
-                    { id: 'OFFICIAL', label: 'Official' },
-                  ].map((s) => (
+                  <div className="hidden sm:flex items-center gap-1">
                     <button
-                      key={s.id}
-                      onClick={() => setStatusFilter(s.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold transition ${
-                        statusFilter === s.id
-                          ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                          : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      }`}
+                      onClick={() => exportData('csv')}
+                      title="Export CSV"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     >
-                      {s.label}
+                      <Download className="w-3.5 h-3.5" /> CSV
                     </button>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {[
-                    { id: 'ALL', label: 'All Moves' },
-                    { id: 'SIGNING', label: 'Signings' },
-                    { id: 'TRADE', label: 'Trades' },
-                    { id: 'EXTENSION', label: 'Extensions' },
-                    { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
-                  ].map((m) => (
                     <button
-                      key={m.id}
-                      onClick={() => setTypeFilter(m.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
-                        typeFilter === m.id
-                          ? 'bg-sky-600 text-white'
-                          : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      }`}
+                      onClick={() => exportData('json')}
+                      title="Export JSON"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     >
-                      {m.label}
+                      JSON
                     </button>
-                  ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All Status' },
+                      { id: 'REPORTED', label: 'Reported' },
+                      { id: 'OFFICIAL', label: 'Official' },
+                    ].map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => setStatusFilter(s.id)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold transition ${
+                          statusFilter === s.id
+                            ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All Moves' },
+                      { id: 'SIGNING', label: 'Signings' },
+                      { id: 'TRADE', label: 'Trades' },
+                      { id: 'EXTENSION', label: 'Extensions' },
+                      { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setTypeFilter(m.id)}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
+                          typeFilter === m.id
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {loading ? (
-              <div className="text-center py-16 text-slate-400 text-sm">Loading MLB transactions...</div>
-            ) : transactions.length === 0 ? (
-              <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
-                <p className="font-bold text-base text-slate-700 dark:text-slate-200">
-                  No MLB transactions in your database yet
-                </p>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Click the button below to pull live MLB Trade Rumors reports and official MLB Stats API transactions into Supabase.
-                </p>
-                <button
-                  onClick={() => handleSyncNow(true)}
-                  disabled={syncing}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white shadow"
-                >
-                  <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-                  <span>{syncing ? 'Syncing Live MLB Data...' : 'Pull Live MLB Moves Now'}</span>
-                </button>
-              </div>
-            ) : filteredTransactions.length === 0 ? (
-              <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
-                <p className="font-semibold text-slate-500">No transactions match your current filters.</p>
-                <button
-                  onClick={() => {
-                    setSelectedTeams([]);
-                    setStatusFilter('ALL');
-                    setTypeFilter('ALL');
-                    setSearchQuery('');
-                    setMajorLeagueOnly(false);
-                  }}
-                  className="mt-2 text-xs font-bold text-sky-500 hover:underline"
-                >
-                  Reset all filters (including Minor League moves)
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3.5">
-                {filteredTransactions.map((tx) => {
-                  const destTeam = getTeamInfo(tx.to_team);
-                  const isNew = new Date(tx.reported_at).getTime() > lastVisit;
-                  const stale = isStaleRumor(tx);
+              {loading ? (
+                <div className="text-center py-16 text-slate-400 text-sm">Loading MLB transactions...</div>
+              ) : transactions.length === 0 ? (
+                <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3 bg-white dark:bg-slate-900">
+                  <p className="font-bold text-base text-slate-700 dark:text-slate-200">
+                    No MLB transactions in your database yet
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Click the button below to pull live MLB Trade Rumors reports and official 30-team MLB Stats API transactions into Supabase.
+                  </p>
+                  <button
+                    onClick={() => handleSyncNow(true)}
+                    disabled={syncing}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white shadow"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                    <span>{syncing ? 'Syncing Live MLB Data...' : 'Pull Live MLB Moves Now'}</span>
+                  </button>
+                </div>
+              ) : filteredTransactions.length === 0 ? (
+                <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900">
+                  <p className="font-semibold text-slate-500">No transactions match your current filters.</p>
+                  <button
+                    onClick={() => {
+                      setSelectedTeams([]);
+                      setStatusFilter('ALL');
+                      setTypeFilter('ALL');
+                      setSearchQuery('');
+                      setMajorLeagueOnly(false);
+                    }}
+                    className="mt-2 text-xs font-bold text-sky-500 hover:underline"
+                  >
+                    Reset all filters
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredTransactions.map((tx) => {
+                    const destTeam = getTeamInfo(tx.to_team || tx.from_team);
+                    const isNew = new Date(tx.reported_at).getTime() > lastVisit;
+                    const stale = isStaleRumor(tx);
+                    const cleanHeadline = decodeHtml(tx.headline);
+                    const cleanNotes = decodeHtml(tx.contract_notes);
 
-                  return (
-                    <article
-                      key={tx.id}
-                      className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {tx.status === 'OFFICIAL' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> OFFICIAL
-                            </span>
-                          )}
-                          {tx.status === 'REPORTED' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                              <Clock className="w-3.5 h-3.5" /> REPORTED
-                            </span>
-                          )}
-                          {tx.status === 'VOIDED' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-rose-500/15 text-rose-500">
-                              <ShieldAlert className="w-3.5 h-3.5" /> VOIDED / FELL THROUGH
-                            </span>
-                          )}
-
-                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                            {tx.move_type.replace('_', ' ')}
-                          </span>
-
-                          {isNew && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-500 text-white">
-                              NEW
-                            </span>
-                          )}
-
-                          {stale && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-500">
-                              <AlertTriangle className="w-3 h-3" /> Pending &gt;14 Days
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                          {tx.source_url ? (
-                            <a
-                              href={tx.source_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="hover:text-sky-400 underline"
-                            >
-                              {tx.source_name}
-                            </a>
-                          ) : (
-                            <span>{tx.source_name}</span>
-                          )}
-                          <span>•</span>
-                          <span>{new Date(tx.reported_at).toLocaleDateString()}</span>
-                          {isAdmin && (
-                            <button
-                              onClick={() => setEditingTx(tx)}
-                              className="ml-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-sky-500 font-semibold"
-                            >
-                              <Edit3 className="w-3 h-3" /> Edit
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {tx.move_type === 'TRADE' && (tx.team_a_receives?.length || tx.team_b_receives?.length) ? (
-                        <div>
-                          <h2 className="font-bold text-base sm:text-lg mb-3">{tx.headline}</h2>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {[
-                              { teamAbbr: tx.team_a, list: tx.team_a_receives || [] },
-                              { teamAbbr: tx.team_b, list: tx.team_b_receives || [] },
-                            ].map((side, idx) => {
-                              const tInfo = getTeamInfo(side.teamAbbr);
-                              return (
-                                <div
-                                  key={idx}
-                                  className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60"
-                                >
-                                  <div className="flex items-center gap-2 mb-2.5">
-                                    <span
-                                      className="px-2 py-0.5 rounded text-xs font-black text-white"
-                                      style={{ backgroundColor: tInfo.color }}
-                                    >
-                                      {tInfo.abbr}
-                                    </span>
-                                    <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                      {tInfo.short} Receive
-                                    </span>
-                                  </div>
-                                  <div className="space-y-2">
-                                    {side.list.map((p, i) => (
-                                      <div key={i} className="flex items-center gap-2.5">
-                                        <PlayerAvatar
-                                          playerId={p.playerId}
-                                          playerName={p.playerName}
-                                          teamAbbr={side.teamAbbr}
-                                          size="sm"
-                                        />
-                                        <div>
-                                          <div className="text-sm font-bold flex items-center gap-1.5">
-                                            <span>{p.playerName}</span>
-                                            <span className="text-[11px] font-semibold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800">
-                                              {p.position}
-                                            </span>
-                                            <span className="text-[11px] text-slate-400">
-                                              {p.level}
-                                            </span>
-                                          </div>
-                                          {p.statLine && (
-                                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                                              {p.statLine}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div className="flex items-center gap-3.5">
-                            <PlayerAvatar
-                              playerId={tx.player_id}
-                              playerName={tx.player_name}
-                              teamAbbr={tx.to_team}
-                            />
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span
-                                  className="px-2 py-0.5 rounded text-xs font-black text-white"
-                                  style={{ backgroundColor: destTeam.color }}
-                                >
-                                  {destTeam.abbr}
+                    return (
+                      <article
+                        key={tx.id}
+                        className="relative overflow-hidden p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
+                      >
+                        <div
+                          className="absolute left-0 top-0 bottom-0 w-1"
+                          style={{ backgroundColor: destTeam.color }}
+                        />
+                        <div className="pl-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {tx.status === 'OFFICIAL' && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> OFFICIAL
                                 </span>
-                                <h2 className="font-bold text-base sm:text-lg leading-snug">
-                                  {tx.headline}
-                                </h2>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                {tx.position && (
-                                  <span className="font-bold text-slate-700 dark:text-slate-200">
-                                    {tx.position}
-                                  </span>
-                                )}
-                                {tx.stat_line && (
-                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium">
-                                    {tx.stat_line}
-                                  </span>
-                                )}
-                                {tx.contract_notes && <span>• {tx.contract_notes}</span>}
-                              </div>
+                              )}
+                              {tx.status === 'REPORTED' && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                                  <Clock className="w-3.5 h-3.5" /> REPORTED
+                                </span>
+                              )}
+                              {tx.status === 'VOIDED' && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-500/15 text-rose-500">
+                                  <ShieldAlert className="w-3.5 h-3.5" /> VOIDED
+                                </span>
+                              )}
+
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                {tx.move_type.replace('_', ' ')}
+                              </span>
+
+                              {!tx.is_major_league && (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-slate-200/80 dark:bg-slate-800 text-slate-500">
+                                  MiLB
+                                </span>
+                              )}
+
+                              {isNew && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-500 text-white">
+                                  NEW
+                                </span>
+                              )}
+
+                              {stale && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-500">
+                                  <AlertTriangle className="w-3 h-3" /> Pending &gt;14d
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                              {tx.source_url ? (
+                                <a
+                                  href={tx.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 hover:text-sky-400 transition"
+                                >
+                                  <span>{tx.source_name}</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              ) : (
+                                <span>{tx.source_name}</span>
+                              )}
+                              <span>•</span>
+                              <span>{new Date(tx.reported_at).toLocaleDateString()}</span>
+                              {isAdmin && (
+                                <button
+                                  onClick={() => setEditingTx(tx)}
+                                  className="ml-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-sky-500 font-semibold"
+                                >
+                                  <Edit3 className="w-3 h-3" /> Edit
+                                </button>
+                              )}
                             </div>
                           </div>
 
-                          {(tx.contract_years || tx.total_value_millions > 0) && (
-                            <div className="flex sm:flex-col items-end justify-end gap-1.5 shrink-0">
-                              <span className="px-3 py-1 rounded-xl text-sm font-extrabold bg-sky-500/15 text-sky-700 dark:text-sky-300">
-                                {tx.contract_years ? `${tx.contract_years} yrs` : ''}{' '}
-                                {tx.total_value_millions ? `/ $${tx.total_value_millions}M` : ''}
-                              </span>
-                              {tx.aav_millions > 0 && (
-                                <span className="text-[11px] font-semibold text-slate-400">
-                                  ${tx.aav_millions}M AAV
-                                </span>
+                          {tx.move_type === 'TRADE' && (tx.team_a_receives?.length || tx.team_b_receives?.length) ? (
+                            <div>
+                              <h2 className="font-bold text-base mb-3">{cleanHeadline}</h2>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {[
+                                  { teamAbbr: tx.team_a, list: tx.team_a_receives || [] },
+                                  { teamAbbr: tx.team_b, list: tx.team_b_receives || [] },
+                                ].map((side, idx) => {
+                                  const tInfo = getTeamInfo(side.teamAbbr);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60"
+                                    >
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <span
+                                          className="px-2 py-0.5 rounded text-xs font-black text-white"
+                                          style={{ backgroundColor: tInfo.color }}
+                                        >
+                                          {tInfo.abbr}
+                                        </span>
+                                        <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                          {tInfo.short} Receive
+                                        </span>
+                                      </div>
+                                      <div className="space-y-2">
+                                        {side.list.map((p, i) => (
+                                          <div key={i} className="flex items-center gap-2.5">
+                                            <PlayerAvatar
+                                              playerId={p.playerId}
+                                              playerName={p.playerName}
+                                              teamAbbr={side.teamAbbr}
+                                              size="sm"
+                                            />
+                                            <div>
+                                              <div className="text-sm font-bold flex items-center gap-1.5">
+                                                <span>{p.playerName}</span>
+                                                <span className="text-[11px] font-semibold px-1.5 rounded bg-slate-200 dark:bg-slate-800">
+                                                  {p.position}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div className="flex items-start sm:items-center gap-3.5">
+                                <PlayerAvatar
+                                  playerId={tx.player_id}
+                                  playerName={tx.player_name}
+                                  teamAbbr={destTeam.abbr}
+                                />
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span
+                                      className="px-2 py-0.5 rounded text-xs font-black text-white shrink-0"
+                                      style={{ backgroundColor: destTeam.color }}
+                                    >
+                                      {destTeam.abbr}
+                                    </span>
+                                    <h2 className="font-bold text-sm sm:text-base leading-snug">
+                                      {cleanHeadline}
+                                    </h2>
+                                  </div>
+                                  {(tx.position || tx.stat_line || cleanNotes) && (
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                      {tx.position && (
+                                        <span className="font-bold text-slate-700 dark:text-slate-200 mr-1.5">
+                                          {tx.position}
+                                        </span>
+                                      )}
+                                      {tx.stat_line && (
+                                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 mr-1.5">
+                                          {tx.stat_line}
+                                        </span>
+                                      )}
+                                      {cleanNotes}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {(tx.contract_years || tx.total_value_millions > 0) && (
+                                <div className="flex sm:flex-col items-end justify-end gap-1 shrink-0">
+                                  <span className="px-3 py-1 rounded-xl text-xs sm:text-sm font-extrabold bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                                    {tx.contract_years ? `${tx.contract_years} yr${tx.contract_years > 1 ? 's' : ''}` : ''}
+                                    {tx.contract_years && tx.total_value_millions ? ' / ' : ''}
+                                    {tx.total_value_millions ? `$${tx.total_value_millions}M` : ''}
+                                  </span>
+                                  {tx.aav_millions > 0 && (
+                                    <span className="text-[11px] font-semibold text-slate-400">
+                                      ${tx.aav_millions}M AAV
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
                           )}
                         </div>
-                      )}
-                    </article>
-                  );
-                })}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right Desktop Summary Sidebar */}
+            <aside className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-4 sticky top-20">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
+                <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                  <Activity className="w-4 h-4 text-sky-500" />
+                  <span>Hot Stove Pulse</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                    <div className="text-xl font-black text-sky-500">{transactions.length}</div>
+                    <div className="text-[11px] text-slate-500 font-semibold">MLB Moves</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                    <div className="text-xl font-black text-emerald-500">
+                      ${leagueStats.totalSpent.toFixed(1)}M
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-semibold">Tracked Deals</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                    <div className="text-xl font-black">{leagueStats.totalSignings}</div>
+                    <div className="text-[11px] text-slate-500 font-semibold">Signings</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                    <div className="text-xl font-black">{leagueStats.totalTrades}</div>
+                    <div className="text-[11px] text-slate-500 font-semibold">Trades</div>
+                  </div>
+                </div>
               </div>
-            )}
-          </>
+
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                    Most Active Clubs
+                  </span>
+                  <button
+                    onClick={() => setActiveTab('leaderboard')}
+                    className="text-xs font-bold text-sky-500 hover:underline"
+                  >
+                    View all
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {spendingLeaderboard.slice(0, 8).map((row) => (
+                    <button
+                      key={row.team.abbr}
+                      onClick={() => {
+                        setHubTeam(row.team.abbr);
+                        setActiveTab('teamHub');
+                      }}
+                      className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/70 transition text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-9 text-center py-0.5 rounded text-[11px] font-black text-white"
+                          style={{ backgroundColor: row.team.color }}
+                        >
+                          {row.team.abbr}
+                        </span>
+                        <span className="text-xs font-bold">{row.team.short}</span>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-extrabold">
+                          {row.totalMillions > 0 ? `$${row.totalMillions.toFixed(1)}M` : `${row.totalMoves} moves`}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                    Top Unsigned Free Agents
+                  </span>
+                  <button
+                    onClick={() => setActiveTab('freeAgents')}
+                    className="text-xs font-bold text-sky-500 hover:underline"
+                  >
+                    See all
+                  </button>
+                </div>
+                {loadingFreeAgents ? (
+                  <p className="text-xs text-slate-400">Loading MLB free agents...</p>
+                ) : freeAgents.length === 0 ? (
+                  <p className="text-xs text-slate-400">No free agents listed yet.</p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {freeAgents.slice(0, 6).map((fa) => (
+                      <div key={fa.playerId} className="flex items-center gap-2.5">
+                        <PlayerAvatar
+                          playerId={fa.playerId}
+                          playerName={fa.fullName}
+                          teamAbbr={fa.lastTeam}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold truncate">
+                            {fa.fullName} <span className="text-slate-400">({fa.position})</span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">{fa.statLine}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </aside>
+          </div>
         )}
 
         {activeTab === 'freeAgents' && (
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="space-y-4">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-extrabold">MLB Free Agents (Live MLB Stats API)</h2>
-                <p className="text-xs text-slate-500">Unsigned players currently listed by MLB Stats API</p>
+                <h2 className="text-xl font-extrabold">Available MLB Free Agents</h2>
+                <p className="text-xs text-slate-500">
+                  Live unsigned MLB players with {faSeason} official MLB Stats API numbers
+                </p>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => (
-                  <button
-                    key={pos}
-                    onClick={() => setFaPositionFilter(pos)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      faPositionFilter === pos
-                        ? 'bg-sky-600 text-white'
-                        : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {pos}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={faSearch}
+                    onChange={(e) => setFaSearch(e.target.value)}
+                    placeholder="Search free agents..."
+                    className="pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => (
+                    <button
+                      key={pos}
+                      onClick={() => setFaPositionFilter(pos)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        faPositionFilter === pos
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      {pos}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {loadingFreeAgents ? (
-              <div className="text-center py-12 text-sm text-slate-400">Fetching live MLB free agent list...</div>
-            ) : freeAgents.length === 0 ? (
-              <div className="text-center py-12 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 text-sm text-slate-400">
-                No unsigned free agents returned by MLB Stats API right now.
+              <div className="text-center py-16 text-sm text-slate-400">
+                Fetching live MLB free agent list &amp; {faSeason} stats...
+              </div>
+            ) : filteredFreeAgents.length === 0 ? (
+              <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
+                <p className="text-sm font-semibold text-slate-500">
+                  No matching unsigned free agents found.
+                </p>
+                <button
+                  onClick={fetchFreeAgents}
+                  className="text-xs font-bold text-sky-500 hover:underline"
+                >
+                  Retry Live MLB Fetch
+                </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {freeAgents
-                  .filter((fa) => faPositionFilter === 'ALL' || fa.position === faPositionFilter)
-                  .map((fa, idx) => (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                {filteredFreeAgents.map((fa, idx) => {
+                  const prevTeam = getTeamInfo(fa.lastTeam);
+                  return (
                     <div
                       key={fa.playerId || idx}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3"
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/40 transition"
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
                         <PlayerAvatar
                           playerId={fa.playerId}
                           playerName={fa.fullName}
                           teamAbbr={fa.lastTeam}
                         />
-                        <div>
-                          <div className="font-bold text-base flex items-center gap-2">
-                            <span>{fa.fullName}</span>
-                            <span className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm sm:text-base flex items-center gap-2">
+                            <span className="truncate">{fa.fullName}</span>
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold shrink-0">
                               {fa.position}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Age {fa.age} • Prev: {fa.lastTeam} • {fa.statLine}
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+                            <span>Age {fa.age}</span>
+                            <span>•</span>
+                            <span
+                              className="px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                              style={{ backgroundColor: prevTeam.color }}
+                            >
+                              {prevTeam.abbr}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1 truncate">
+                            {fa.statLine}
                           </p>
                         </div>
                       </div>
-                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 ${
+                          fa.tier === 'Top Tier'
+                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                            : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
+                        }`}
+                      >
                         {fa.tier}
                       </span>
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             )}
           </div>
         )}
 
         {activeTab === 'teamHub' && (
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+          <div className="space-y-4">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-extrabold">30-Team Offseason Hub</h2>
                 <p className="text-xs text-slate-500">Select a club to review additions &amp; departures</p>
@@ -951,7 +1130,7 @@ export default function App() {
               <select
                 value={hubTeam}
                 onChange={(e) => setHubTeam(e.target.value)}
-                className="px-3.5 py-2 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                className="px-3.5 py-2 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
               >
                 {MLB_TEAMS.map((t) => (
                   <option key={t.abbr} value={t.abbr}>
@@ -972,50 +1151,58 @@ export default function App() {
               return (
                 <div className="space-y-4">
                   <div
-                    className="p-5 rounded-2xl text-white flex items-center justify-between"
+                    className="p-6 rounded-2xl text-white flex items-center justify-between shadow-lg"
                     style={{ backgroundColor: info.color }}
                   >
                     <div>
-                      <span className="text-xs uppercase font-bold opacity-80">{info.division}</span>
-                      <h3 className="text-2xl font-black">{info.name}</h3>
+                      <span className="text-xs uppercase font-bold opacity-85">{info.division}</span>
+                      <h3 className="text-2xl sm:text-3xl font-black">{info.name}</h3>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-black">{additions.length}</div>
-                      <div className="text-xs opacity-85">Offseason Additions</div>
+                      <div className="text-3xl font-black">{additions.length}</div>
+                      <div className="text-xs opacity-90 font-semibold">Logged Moves</div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                       <h4 className="font-extrabold text-sm uppercase tracking-wider text-emerald-500 mb-3">
-                        Additions ({additions.length})
+                        Additions &amp; Club Activity ({additions.length})
                       </h4>
                       {additions.length === 0 ? (
-                        <p className="text-xs text-slate-400">No logged additions yet.</p>
+                        <p className="text-xs text-slate-400">No logged moves yet.</p>
                       ) : (
-                        <ul className="space-y-2 text-sm">
+                        <ul className="space-y-2.5 text-sm">
                           {additions.map((a) => (
-                            <li key={a.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950">
-                              <div className="font-bold">{a.headline}</div>
-                              <div className="text-xs text-slate-400 mt-0.5">{a.status}</div>
+                            <li key={a.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                              <div className="font-bold">{decodeHtml(a.headline)}</div>
+                              <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
+                                <span>{a.status}</span>
+                                <span>•</span>
+                                <span>{new Date(a.reported_at).toLocaleDateString()}</span>
+                              </div>
                             </li>
                           ))}
                         </ul>
                       )}
                     </div>
 
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                       <h4 className="font-extrabold text-sm uppercase tracking-wider text-rose-500 mb-3">
-                        Subtractions ({subtractions.length})
+                        Departures &amp; Releases ({subtractions.length})
                       </h4>
                       {subtractions.length === 0 ? (
                         <p className="text-xs text-slate-400">No logged departures yet.</p>
                       ) : (
-                        <ul className="space-y-2 text-sm">
+                        <ul className="space-y-2.5 text-sm">
                           {subtractions.map((s) => (
-                            <li key={s.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950">
-                              <div className="font-bold">{s.headline}</div>
-                              <div className="text-xs text-slate-400 mt-0.5">{s.status}</div>
+                            <li key={s.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                              <div className="font-bold">{decodeHtml(s.headline)}</div>
+                              <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
+                                <span>{s.status}</span>
+                                <span>•</span>
+                                <span>{new Date(s.reported_at).toLocaleDateString()}</span>
+                              </div>
                             </li>
                           ))}
                         </ul>
@@ -1029,39 +1216,94 @@ export default function App() {
         )}
 
         {activeTab === 'leaderboard' && (
-          <div>
-            <div className="mb-4">
-              <h2 className="text-xl font-extrabold">Offseason Spending Leaderboard</h2>
-              <p className="text-xs text-slate-500">
-                Guaranteed contract commitments across all 30 clubs (excluding voided deals)
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-              {spendingLeaderboard.map((row, idx) => (
-                <div
-                  key={row.team.abbr}
-                  className="px-4 py-3 border-b last:border-b-0 border-slate-100 dark:border-slate-800 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
-                    <span
-                      className="px-2 py-0.5 rounded text-xs font-black text-white"
-                      style={{ backgroundColor: row.team.color }}
-                    >
-                      {row.team.abbr}
-                    </span>
-                    <span className="font-bold text-sm">{row.team.name}</span>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xl font-black">${leagueStats.totalSpent.toFixed(1)}M</div>
+                  <div className="text-xs text-slate-500">Disclosed Offseason Commitments</div>
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xl font-black">{transactions.length}</div>
+                  <div className="text-xs text-slate-500">Total MLB Transactions Tracked</div>
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                  <Trophy className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xl font-black">
+                    {leagueStats.mostActive?.team?.short || '—'}
                   </div>
-                  <div className="text-right">
-                    <span className="font-extrabold text-sm">
-                      ${row.totalMillions.toFixed(1)}M
-                    </span>
-                    <span className="ml-2 text-xs text-slate-400">
-                      ({row.signingsCount} {row.signingsCount === 1 ? 'deal' : 'deals'})
-                    </span>
+                  <div className="text-xs text-slate-500">
+                    Most Active ({leagueStats.mostActive?.totalMoves || 0} moves)
                   </div>
                 </div>
-              ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+              <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-extrabold">Offseason Spending &amp; Activity Leaderboard</h2>
+                  <p className="text-xs text-slate-500">
+                    Sorted by disclosed contract dollars, then signings &amp; total roster activity (official MLB API does not disclose salaries—use Admin Lock to add private figures)
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
+                {spendingLeaderboard.map((row, idx) => {
+                  const pct = row.totalMillions > 0 ? Math.max(6, (row.totalMillions / maxTeamSpend) * 100) : 0;
+                  return (
+                    <div
+                      key={row.team.abbr}
+                      onClick={() => {
+                        setHubTeam(row.team.abbr);
+                        setActiveTab('teamHub');
+                      }}
+                      className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
+                          <span
+                            className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
+                            style={{ backgroundColor: row.team.color }}
+                          >
+                            {row.team.abbr}
+                          </span>
+                          <span className="font-bold text-sm">{row.team.name}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-extrabold text-sm">
+                            ${row.totalMillions.toFixed(1)}M
+                          </span>
+                          <span className="ml-2 text-xs text-slate-400">
+                            ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
+                          </span>
+                        </div>
+                      </div>
+                      {pct > 0 && (
+                        <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${pct}%`, backgroundColor: row.team.color }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -1190,7 +1432,7 @@ export default function App() {
               onChange={(e) => setEditingTx({ ...editingTx, status: e.target.value })}
               className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
             >
-              <option value="REPORTED">REPORTED (Sources Say)</option>
+              <option value="REPORTED">REPORTED</option>
               <option value="OFFICIAL">OFFICIAL</option>
               <option value="VOIDED">VOIDED / FELL THROUGH</option>
             </select>
@@ -1255,7 +1497,7 @@ export default function App() {
               <input
                 name="to_team"
                 required
-                placeholder="New Team (e.g., NYY)"
+                placeholder="New Team (e.g., TOR)"
                 className="px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
               />
             </div>
