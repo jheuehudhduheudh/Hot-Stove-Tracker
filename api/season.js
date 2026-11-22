@@ -323,25 +323,14 @@ function pickThumbnail(imageObj) {
   return preferred?.src || null;
 }
 
-function pickMp4Playback(playbacks) {
-  if (!Array.isArray(playbacks)) return null;
-  const mp4Avc = playbacks.find((p) => p?.name === 'mp4Avc' && p?.url);
-  if (mp4Avc) return mp4Avc.url;
-  const highBit = playbacks.find((p) => p?.name === 'highBit' && p?.url && /\.mp4/i.test(p.url));
-  if (highBit) return highBit.url;
-  const anyMp4 = playbacks.find((p) => p?.url && /\.mp4(\?|$)/i.test(p.url));
-  if (anyMp4) return anyMp4.url;
-  return null;
-}
-
-function parseHighlights(contentData) {
+function parseHighlights(contentData, gamePk) {
   const rawItems = [
     ...(contentData?.highlights?.highlights?.items || []),
   ];
 
   // Also check editorial MLB recap media if present
   const recapMedia = contentData?.editorial?.recap?.mlb?.media;
-  if (recapMedia && recapMedia.playbacks) {
+  if (recapMedia && (recapMedia.slug || recapMedia.headline || recapMedia.title)) {
     rawItems.unshift(recapMedia);
   }
 
@@ -356,9 +345,9 @@ function parseHighlights(contentData) {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const videoUrl = pickMp4Playback(item.playbacks);
-    const mlbUrl = item.slug ? `https://www.mlb.com/video/${item.slug}` : null;
-    if (!videoUrl && !mlbUrl) continue;
+    const mlbUrl = item.slug
+      ? `https://www.mlb.com/video/${item.slug}`
+      : `https://www.mlb.com/gameday/${gamePk}/video`;
 
     const isRecap =
       /\b(condensed\s+game|recap|highlights\s*[:|–-]|\bvs\.?\b.*\bhighlights\b)/i.test(headline) ||
@@ -370,7 +359,6 @@ function parseHighlights(contentData) {
       blurb: item.blurb || item.description || '',
       duration: item.duration || '',
       thumbnail: pickThumbnail(item.image),
-      videoUrl,
       mlbUrl,
       isRecap: Boolean(isRecap),
     });
@@ -519,7 +507,7 @@ async function handleBoxScore(req, res) {
 
   const offense = lineData?.offense || {};
   const scoringPlays = parseScoringPlays(pbpData);
-  const highlights = parseHighlights(contentData);
+  const highlights = parseHighlights(contentData, gamePk);
 
   return res.status(200).json({
     gamePk: Number(gamePk),
@@ -559,6 +547,7 @@ async function handleBoxScore(req, res) {
     home: parseSide(boxData?.teams?.home),
     scoringPlays,
     highlights,
+    gameVideoHubUrl: `https://www.mlb.com/gameday/${gamePk}/video`,
     gameInfo,
   });
 }

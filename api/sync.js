@@ -44,12 +44,6 @@ const TEAM_NAME_PATTERNS = [
   ['milwaukee brewers', 'MIL'], ['brewers', 'MIL'],
 ];
 
-const WORD_NUMBERS = {
-  one: 1, two: 2, three: 3, four: 4, five: 5,
-  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
-  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
-};
-
 function safeIsoDate(val) {
   if (!val) return new Date().toISOString();
   const d = new Date(val);
@@ -80,131 +74,6 @@ function detectTeamFromText(text) {
     if (regex.test(lower)) return abbr;
   }
   return null;
-}
-
-function parseContractDetails(title, description = '') {
-  const combined = `${title} ${description}`;
-  let years = null;
-
-  const digitYears = combined.match(/(\d+)[-\s]year/i);
-  if (digitYears) {
-    years = parseInt(digitYears[1], 10);
-  } else {
-    const wordYears = combined.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s]year\b/i);
-    if (wordYears) years = WORD_NUMBERS[wordYears[1].toLowerCase()] || null;
-  }
-
-  let totalMillions = null;
-  const moneyMatch = combined.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)[\s-]*(MM|M|million|B|billion|K|thousand)?\b/i);
-  if (moneyMatch) {
-    const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
-    const unit = (moneyMatch[2] || '').toLowerCase();
-    if (unit === 'b' || unit === 'billion') {
-      totalMillions = Number((rawNum * 1000).toFixed(2));
-    } else if (unit === 'mm' || unit === 'm' || unit === 'million') {
-      totalMillions = Number(rawNum.toFixed(2));
-    } else if (unit === 'k' || unit === 'thousand') {
-      totalMillions = Number((rawNum / 1000).toFixed(3));
-    } else if (rawNum >= 500000) {
-      totalMillions = Number((rawNum / 1000000).toFixed(2));
-    }
-  }
-
-  if (years && (years < 1 || years > 15)) years = null;
-  if (totalMillions && (totalMillions < 0.5 || totalMillions > 1500)) totalMillions = null;
-
-  const aav = years && totalMillions ? Number((totalMillions / years).toFixed(2)) : null;
-  return { years, totalMillions, aav };
-}
-
-async function lookupPlayerId(playerName) {
-  if (!playerName) return null;
-  try {
-    const res = await fetch(
-      `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(playerName)}`
-    );
-    const data = await res.json();
-    const person = data?.people?.[0];
-    return person
-      ? { id: person.id, position: person.primaryPosition?.abbreviation || 'MLB' }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseRssItems(xml) {
-  const items = [];
-  const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
-
-  const speculationPattern = /(had\s+interest|have\s+interest|expressed\s+interest|receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|trade\s+deadline|listening\s+to|could\s+|might\s+|rumors|mailbag|live\s+chat|poll|predictions|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|expected\s+to\s+shop|shopping\s+|offseason\s+outlook|arbitration\s+projections|predicted\s+salaries|free\s+agent\s+profile|contract\s+prediction)/i;
-
-  const actionPattern = /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|acquire|acquires|acquired|trade|trades|traded|extend|extends|extended|extension|designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|exercise|exercises|exercised|decline|declines|declined|accept|accepts|accepted|qualifying\s+offer|outright|outrighted|recall|recalled|option|optioned|injured\s+list)\b/i;
-
-  for (const block of itemBlocks.slice(0, 45)) {
-    const rawTitle =
-      block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1] ||
-      block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ||
-      '';
-    const rawDesc =
-      block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1] ||
-      block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ||
-      '';
-    const link = (block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '').trim();
-    const pubDate = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '').trim();
-
-    const title = decodeHtml(rawTitle);
-    const description = decodeHtml(rawDesc);
-
-    if (!title) continue;
-    if (speculationPattern.test(title)) continue;
-    if (!actionPattern.test(title)) continue;
-
-    const team = detectTeamFromText(title);
-    if (!team) continue;
-
-    const isMinorLeague = /minor league/i.test(title) || /minor league deal/i.test(description);
-
-    let moveType = 'SIGNING';
-    if (/\b(acquire|acquires|acquired|trade|trades|traded)\b/i.test(title)) {
-      moveType = 'TRADE';
-    } else if (/\b(extend|extends|extended|extension)\b/i.test(title)) {
-      moveType = 'EXTENSION';
-    } else if (/\b(designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|outright|outrighted|decline|declines|declined|recall|recalled|option|optioned|injured\s+list)\b/i.test(title)) {
-      moveType = 'DFA_WAIVER';
-    }
-
-    const { years, totalMillions, aav } = parseContractDetails(title, description);
-
-    let playerName = null;
-    const agreeMatch = title.match(/^[A-Za-z\s.'-]+,\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)\s+Agree/i);
-    const verbMatch = title.match(/\b(?:Sign|Signs|Re-Sign|Re-Signs|Acquire|Acquires|Extend|Extends|Designate|Designates|Claim|Claims|Release|Releases|Non-Tender|Non-Tenders|Exercise|Decline|Recall|Option)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/);
-    if (agreeMatch) playerName = agreeMatch[1].trim();
-    else if (verbMatch) playerName = verbMatch[1].trim();
-
-    if (playerName && /^(To |A |An |The |Club |Mutual |Player |Two |Three |Four |Five |Minor |Major )/i.test(playerName)) {
-      playerName = null;
-    }
-
-    const notesSnippet = description.length > 140 ? `${description.slice(0, 140)}...` : description;
-
-    items.push({
-      external_id: `mlbtr-${Buffer.from(link || title).toString('base64').slice(0, 48)}`,
-      headline: title,
-      source_name: 'MLB Trade Rumors',
-      source_url: link || 'https://www.mlbtraderumors.com',
-      reported_at: safeIsoDate(pubDate),
-      move_type: moveType,
-      is_major_league: !isMinorLeague,
-      to_team: team,
-      player_name: playerName,
-      contract_years: years,
-      total_value_millions: totalMillions,
-      aav_millions: aav,
-      contract_notes: notesSnippet,
-    });
-  }
-  return items;
 }
 
 export default async function handler(req, res) {
@@ -242,72 +111,20 @@ export default async function handler(req, res) {
     }
   }
 
+  // Clean up malformed rows & remove any legacy third-party RSS entries so feed stays 100% official MLB facts
   try {
+    await supabase.from('transactions').delete().eq('source_name', 'MLB Trade Rumors');
+    await supabase.from('transactions').delete().like('external_id', 'mlbtr-%');
     await supabase.from('transactions').delete().is('to_team', null).is('from_team', null).is('team_a', null);
     await supabase.from('transactions').delete().ilike('headline', '%assigned to%');
     await supabase.from('transactions').delete().ilike('headline', '%&#%');
-    await supabase.from('transactions').delete().ilike('headline', '%Receiving Trade Interest%');
-    await supabase.from('transactions').delete().ilike('headline', '%Had Interest In%');
-    await supabase.from('transactions').delete().ilike('headline', '%At Trade Deadline%');
-    await supabase.from('transactions').delete().ilike('headline', '%Offseason Outlook%');
   } catch (cleanErr) {
     console.error('Cleanup warning:', cleanErr.message);
   }
 
   let addedCount = 0;
-  let upgradedCount = 0;
 
-  const rssFeeds = [
-    'https://www.mlbtraderumors.com/feed',
-    'https://www.mlbtraderumors.com/category/transactions/feed',
-  ];
-  const seenExtIds = new Set();
-
-  for (const feedUrl of rssFeeds) {
-    try {
-      const rssRes = await fetch(feedUrl, {
-        headers: { 'User-Agent': 'HotStoveTracker/1.4' },
-      });
-      if (!rssRes.ok) continue;
-      const xml = await rssRes.text();
-      const parsedRumors = parseRssItems(xml);
-
-      for (const item of parsedRumors) {
-        if (seenExtIds.has(item.external_id)) continue;
-        seenExtIds.add(item.external_id);
-
-        const { data: existing } = await supabase
-          .from('transactions')
-          .select('id, contract_years, total_value_millions')
-          .eq('external_id', item.external_id)
-          .maybeSingle();
-
-        if (!existing) {
-          const person = await lookupPlayerId(item.player_name);
-          const { error: insertErr } = await supabase.from('transactions').insert({
-            ...item,
-            status: 'REPORTED',
-            player_id: person?.id || null,
-            position: person?.position || null,
-          });
-          if (!insertErr) addedCount++;
-        } else if (!existing.total_value_millions && item.total_value_millions) {
-          await supabase
-            .from('transactions')
-            .update({
-              contract_years: item.contract_years,
-              total_value_millions: item.total_value_millions,
-              aav_millions: item.aav_millions,
-              contract_notes: item.contract_notes,
-            })
-            .eq('id', existing.id);
-        }
-      }
-    } catch (err) {
-      console.error('RSS sync warning:', err.message);
-    }
-  }
-
+  // Official MLB Stats API Transactions — Strictly 30 MLB Teams Only (Last 30 Days)
   try {
     const end = new Date();
     const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -342,39 +159,16 @@ export default async function handler(req, res) {
         }
       }
 
-      for (const tx of singleTx.slice(-110)) {
+      for (const tx of singleTx.slice(-140)) {
         const extId = `mlb-tx-${tx.id}`;
         const playerName = tx.person?.fullName || 'Unknown Player';
         const toTeam = tx._toMlb;
         const fromTeam = tx._fromMlb;
         const desc = decodeHtml(tx.description || `${tx.toTeam?.name || 'MLB'} transaction involving ${playerName}`);
         const isMinor = /minor league/i.test(desc);
-        const moveType = ['DFA', 'CLW', 'REL', 'OUT', 'IL', 'CU', 'OPT', 'REC'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
-
-        if (toTeam && playerName && playerName !== 'Unknown Player') {
-          const { data: matchingReported } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('status', 'REPORTED')
-            .eq('to_team', toTeam)
-            .ilike('player_name', `%${playerName}%`)
-            .maybeSingle();
-
-          if (matchingReported) {
-            await supabase
-              .from('transactions')
-              .update({
-                status: 'OFFICIAL',
-                official_date: tx.date || fmt(end),
-                player_id: tx.person?.id || matchingReported.player_id,
-                source_name: 'MLB.com Official (Confirmed)',
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', matchingReported.id);
-            upgradedCount++;
-            continue;
-          }
-        }
+        const moveType = ['DFA', 'CLW', 'REL', 'OUT', 'IL', 'CU', 'OPT', 'REC'].includes(tx.typeCode)
+          ? 'DFA_WAIVER'
+          : 'SIGNING';
 
         const { data: exists } = await supabase
           .from('transactions')
@@ -459,7 +253,7 @@ export default async function handler(req, res) {
   }
 
   const nowIso = new Date().toISOString();
-  const summary = `Synced MLB feed: ${addedCount} new moves, ${upgradedCount} upgraded to Official`;
+  const summary = `Synced official MLB feed: ${addedCount} new moves`;
   await supabase
     .from('sync_metadata')
     .upsert({ id: 1, last_synced_at: nowIso, last_sync_summary: summary });
@@ -467,7 +261,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     skipped: false,
     addedCount,
-    upgradedCount,
+    upgradedCount: 0,
     last_synced_at: nowIso,
     summary,
   });
