@@ -4,7 +4,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
@@ -33,6 +33,13 @@ function isFreeAgencyElection(tx) {
 }
 
 function getEffectiveMoveType(tx) {
+  const h = (tx?.headline || '').toLowerCase();
+  if (h.includes('injured list') || h.includes('10-day il') || h.includes('15-day il') || h.includes('60-day il') || h.includes('rehab assignment')) {
+    return 'INJURED_LIST';
+  }
+  if (h.includes('recalled') || h.includes('optioned') || h.includes('selected the contract')) {
+    return 'CALLUP_OPTION';
+  }
   if (isFreeAgencyElection(tx)) return 'FREE_AGENCY';
   return tx?.move_type || 'SIGNING';
 }
@@ -41,6 +48,33 @@ function shiftDateStr(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + days));
   return dt.toISOString().slice(0, 10);
+}
+
+function BrandLogo({ className = 'w-9 h-9' }) {
+  return (
+    <svg viewBox="0 0 120 120" fill="none" className={`${className} shrink-0 drop-shadow`}>
+      <defs>
+        <linearGradient id="hstBg" x1="12" y1="8" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#f97316" />
+          <stop offset="52%" stopColor="#e11d48" />
+          <stop offset="100%" stopColor="#0284c7" />
+        </linearGradient>
+        <linearGradient id="hstFlame" x1="60" y1="16" x2="60" y2="96" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#fef08a" />
+          <stop offset="55%" stopColor="#fb923c" />
+          <stop offset="100%" stopColor="#f43f5e" />
+        </linearGradient>
+      </defs>
+      <rect x="6" y="6" width="108" height="108" rx="28" fill="url(#hstBg)" />
+      <rect x="10" y="10" width="100" height="100" rx="24" fill="#0f172a" fillOpacity="0.88" />
+      <path d="M61 18C61 18 88 39 88 67C88 84.5 75.5 98 60 98C44.5 98 32 84.5 32 67C32 54 40 43 45 38C44 46 48 51 52 51C49 39 54 26 61 18Z" fill="url(#hstFlame)" />
+      <circle cx="60" cy="70" r="21" fill="#f8fafc" />
+      <path d="M47 55C53 62 53 78 47 85" stroke="#e11d48" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M73 55C67 62 67 78 73 85" stroke="#e11d48" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M45 60L50 58M46 66L51 65M46 74L51 75M45 80L50 82" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" />
+      <path d="M75 60L70 58M74 66L69 65M74 74L69 75M75 80L70 82" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
@@ -123,6 +157,27 @@ export default function App() {
   const [leadersData, setLeadersData] = useState({ hitting: [], pitching: [] });
   const [loadingLeaders, setLoadingLeaders] = useState(false);
 
+  // Free Agent Watchlist
+  const [watchlistIds, setWatchlistIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hst_watchlist');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
+
+  // Team Hub Roster & Injured List state
+  const [hubRoster, setHubRoster] = useState(null);
+  const [loadingHubRoster, setLoadingHubRoster] = useState(false);
+  const [hubRosterView, setHubRosterView] = useState('depth');
+
+  // Spending Multi-Year Cycle state
+  const [spendingCycle, setSpendingCycle] = useState('2026-27');
+  const [spendingApiData, setSpendingApiData] = useState(null);
+  const [loadingSpending, setLoadingSpending] = useState(false);
+
   // Player Year-by-Year Stats Modal
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStats, setPlayerStats] = useState(null);
@@ -180,6 +235,17 @@ export default function App() {
     setHubTeam(abbr);
     setActiveTab('teamHub');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const toggleWatchlist = (playerId, playerName, e) => {
+    if (e) e.stopPropagation();
+    if (!playerId) return;
+    setWatchlistIds((prev) => {
+      const exists = prev.includes(playerId);
+      const next = exists ? prev.filter((id) => id !== playerId) : [...prev, playerId];
+      localStorage.setItem('hst_watchlist', JSON.stringify(next));
+      return next;
+    });
   };
 
   const openPlayerModal = async (playerId, playerName, teamAbbr) => {
@@ -330,6 +396,48 @@ export default function App() {
     }
   }, [activeTab, leadersSeason]);
 
+  useEffect(() => {
+    if (activeTab === 'teamHub' && hubTeam) {
+      let cancelled = false;
+      setLoadingHubRoster(true);
+      fetch(`/api/season?type=roster&team=${encodeURIComponent(hubTeam)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!cancelled) setHubRoster(data);
+        })
+        .catch(() => {
+          if (!cancelled) setHubRoster(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingHubRoster(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [activeTab, hubTeam]);
+
+  useEffect(() => {
+    if (activeTab === 'leaderboard') {
+      let cancelled = false;
+      setLoadingSpending(true);
+      fetch(`/api/spending?cycle=${encodeURIComponent(spendingCycle)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!cancelled) setSpendingApiData(data);
+        })
+        .catch(() => {
+          if (!cancelled) setSpendingApiData(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingSpending(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [activeTab, spendingCycle]);
+
   const handleSyncNow = async (force = false, silent = false) => {
     setSyncing(true);
     if (!silent) setSyncNotice('');
@@ -412,7 +520,8 @@ export default function App() {
   }, [transactions, spendingLeaderboard]);
 
   const filteredFreeAgents = useMemo(() => {
-    return freeAgents.filter((fa) => {
+    const list = freeAgents.filter((fa) => {
+      if (watchlistOnly && !watchlistIds.includes(fa.playerId)) return false;
       if (faPositionFilter !== 'ALL') {
         if (faPositionFilter === 'P') {
           if (!['P', 'SP', 'RP', 'RHP', 'LHP'].includes(fa.position)) return false;
@@ -429,7 +538,12 @@ export default function App() {
       }
       return true;
     });
-  }, [freeAgents, faPositionFilter, faSearch]);
+    return [...list].sort((a, b) => {
+      const aPin = watchlistIds.includes(a.playerId) ? 1 : 0;
+      const bPin = watchlistIds.includes(b.playerId) ? 1 : 0;
+      return bPin - aPin;
+    });
+  }, [freeAgents, faPositionFilter, faSearch, watchlistOnly, watchlistIds]);
 
   const toggleTeam = (abbr) => {
     setMyTeamsOnlyActive(false);
@@ -596,16 +710,12 @@ export default function App() {
     return 'bg-slate-500/15 text-slate-600 dark:text-slate-300';
   };
 
-  const maxTeamSpend = Math.max(1, ...spendingLeaderboard.map((r) => r.totalMillions));
-
   return (
     <div className="min-h-screen pb-20 md:pb-12 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 shrink-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center text-white shadow">
-              <Flame className="w-5 h-5" />
-            </div>
+            <BrandLogo className="w-9 h-9" />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-extrabold tracking-tight text-base sm:text-lg">
@@ -878,6 +988,8 @@ export default function App() {
                       { id: 'TRADE', label: 'Trades' },
                       { id: 'EXTENSION', label: 'Extensions' },
                       { id: 'FREE_AGENCY', label: 'Free Agency' },
+                      { id: 'INJURED_LIST', label: 'Injured List' },
+                      { id: 'CALLUP_OPTION', label: 'Call-Ups / Options' },
                       { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
                     ].map((m) => (
                       <button
@@ -938,9 +1050,14 @@ export default function App() {
                     const cleanHeadline = decodeHtml(tx.headline);
                     const cleanNotes = decodeHtml(tx.contract_notes);
                     const effType = getEffectiveMoveType(tx);
+                    const isWatchlisted = tx.player_id && watchlistIds.includes(tx.player_id);
                     const badgeLabel =
                       effType === 'FREE_AGENCY'
                         ? 'FREE AGENCY'
+                        : effType === 'INJURED_LIST'
+                        ? 'INJURED LIST'
+                        : effType === 'CALLUP_OPTION'
+                        ? 'CALL-UP / OPTION'
                         : effType.replace('_', ' ');
 
                     return (
@@ -975,6 +1092,10 @@ export default function App() {
                                 className={`px-2 py-0.5 rounded-md text-[11px] font-bold uppercase ${
                                   effType === 'FREE_AGENCY'
                                     ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-300'
+                                    : effType === 'INJURED_LIST'
+                                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                    : effType === 'CALLUP_OPTION'
+                                    ? 'bg-teal-500/15 text-teal-600 dark:text-teal-300'
                                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
                                 }`}
                               >
@@ -990,6 +1111,12 @@ export default function App() {
                               {isNew && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-500 text-white">
                                   NEW
+                                </span>
+                              )}
+
+                              {isWatchlisted && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950">
+                                  <Star className="w-2.5 h-2.5 fill-current" /> WATCHLIST
                                 </span>
                               )}
 
@@ -1289,7 +1416,7 @@ export default function App() {
                 <div>
                   <h2 className="text-xl font-extrabold">Available MLB Free Agents</h2>
                   <p className="text-xs text-slate-500">
-                    Showing {selectedStatYear === 'career' ? 'Career MLB' : `${selectedStatYear} MLB`} stats • Click any player card for full year-by-year history
+                    Showing {selectedStatYear === 'career' ? 'Career MLB' : `${selectedStatYear} MLB`} stats • Star players to pin them to your Watchlist
                   </p>
                 </div>
 
@@ -1311,16 +1438,30 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={faSearch}
-                    onChange={(e) => setFaSearch(e.target.value)}
-                    placeholder="Search free agents by name or team..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
+                <div className="flex flex-wrap items-center gap-2 flex-1">
+                  <div className="relative flex-1 min-w-[200px] max-w-sm">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={faSearch}
+                      onChange={(e) => setFaSearch(e.target.value)}
+                      placeholder="Search free agents by name or team..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                  <button
+                    onClick={() => setWatchlistOnly((w) => !w)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
+                      watchlistOnly
+                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-300'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    <Bookmark className={`w-3.5 h-3.5 ${watchlistOnly ? 'fill-current' : ''}`} />
+                    <span>Watchlist ({watchlistIds.length})</span>
+                  </button>
                 </div>
+
                 <div className="flex flex-wrap gap-1.5">
                   {['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => (
                     <button
@@ -1349,21 +1490,28 @@ export default function App() {
                   No matching unsigned free agents found.
                 </p>
                 <button
-                  onClick={() => fetchFreeAgents(selectedStatYear)}
+                  onClick={() => {
+                    setWatchlistOnly(false);
+                    setFaPositionFilter('ALL');
+                    setFaSearch('');
+                  }}
                   className="text-xs font-bold text-sky-500 hover:underline"
                 >
-                  Retry Live MLB Fetch
+                  Clear Free Agent Filters
                 </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
                 {filteredFreeAgents.map((fa, idx) => {
                   const prevTeam = getTeamInfo(fa.lastTeam);
+                  const pinned = watchlistIds.includes(fa.playerId);
                   return (
                     <div
                       key={fa.playerId || idx}
                       onClick={() => openPlayerModal(fa.playerId, fa.fullName, fa.lastTeam)}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/50 cursor-pointer transition shadow-sm"
+                      className={`p-4 rounded-2xl border bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/50 cursor-pointer transition shadow-sm ${
+                        pinned ? 'border-amber-500/40' : 'border-slate-200 dark:border-slate-800'
+                      }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <PlayerAvatar
@@ -1398,11 +1546,25 @@ export default function App() {
                           </p>
                         </div>
                       </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 ${getTierBadgeStyle(fa.tier)}`}
-                      >
-                        {fa.tier}
-                      </span>
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => toggleWatchlist(fa.playerId, fa.fullName, e)}
+                          title={pinned ? 'Remove from Watchlist' : 'Star to Watchlist'}
+                          className={`p-1.5 rounded-lg border transition ${
+                            pinned
+                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+                              : 'border-slate-200 dark:border-slate-800 text-slate-400 hover:text-amber-400'
+                          }`}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${pinned ? 'fill-current' : ''}`} />
+                        </button>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${getTierBadgeStyle(fa.tier)}`}
+                        >
+                          {fa.tier}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}
@@ -1411,10 +1573,9 @@ export default function App() {
           </div>
         )}
 
-        {/* NEW TAB: Scores & Standings */}
+        {/* Scores & Standings Tab */}
         {activeTab === 'scoresStandings' && (
           <div className="space-y-6">
-            {/* Live Scoreboard Section */}
             <div className="space-y-3">
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -1558,7 +1719,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Standings Section */}
             <div className="space-y-3">
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -1692,7 +1852,7 @@ export default function App() {
           </div>
         )}
 
-        {/* NEW TAB: League Leaders */}
+        {/* League Leaders Tab */}
         {activeTab === 'leaders' && (
           <div className="space-y-4">
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
@@ -1827,12 +1987,13 @@ export default function App() {
           </div>
         )}
 
+        {/* Team Hub Tab with Live Active Roster, Depth Chart & Injured List */}
         {activeTab === 'teamHub' && (
           <div className="space-y-4">
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-extrabold">30-Team Offseason Hub</h2>
-                <p className="text-xs text-slate-500">Select a club to review additions &amp; departures</p>
+                <h2 className="text-xl font-extrabold">30-Team Clubhouse &amp; Transaction Hub</h2>
+                <p className="text-xs text-slate-500">Live roster, Injured List, depth chart &amp; offseason moves</p>
               </div>
               <select
                 value={hubTeam}
@@ -1858,17 +2019,155 @@ export default function App() {
               return (
                 <div className="space-y-4">
                   <div
-                    className="p-6 rounded-2xl text-white flex items-center justify-between shadow-lg"
+                    className="p-6 rounded-2xl text-white flex flex-wrap items-center justify-between gap-4 shadow-lg"
                     style={{ backgroundColor: info.color }}
                   >
                     <div>
                       <span className="text-xs uppercase font-bold opacity-85">{info.division}</span>
                       <h3 className="text-2xl sm:text-3xl font-black">{info.name}</h3>
+                      {hubRoster?.record && (
+                        <p className="text-xs font-bold opacity-90 mt-1">
+                          {hubRoster.record.season} Record: {hubRoster.record.wins}-{hubRoster.record.losses} ({hubRoster.record.pct}) • Div Rank #{hubRoster.record.divRank} • Streak {hubRoster.record.streak}
+                        </p>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <div className="text-3xl font-black">{additions.length}</div>
-                      <div className="text-xs opacity-90 font-semibold">Logged Moves</div>
+                    <div className="flex items-center gap-5 text-right">
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black">{hubRoster?.activeCount ?? '—'}</div>
+                        <div className="text-[11px] opacity-90 font-semibold">{hubRoster?.rosterSource || 'Roster'}</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black">{hubRoster?.ilCount ?? 0}</div>
+                        <div className="text-[11px] opacity-90 font-semibold">On IL</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black">{additions.length}</div>
+                        <div className="text-[11px] opacity-90 font-semibold">Logged Moves</div>
+                      </div>
                     </div>
+                  </div>
+
+                  {/* Live Active Roster / Depth Chart & Injured List */}
+                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-extrabold text-base flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-sky-500" />
+                          <span>{info.short} Live Roster &amp; Injured List</span>
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          Click any player for full year-by-year MLB career stats
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                        {[
+                          { id: 'depth', label: 'Depth Chart' },
+                          { id: 'il', label: `Injured List (${hubRoster?.ilCount ?? 0})` },
+                          { id: 'all', label: `Full Roster (${hubRoster?.activeCount ?? 0})` },
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setHubRosterView(tab.id)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                              hubRosterView === tab.id
+                                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                                : 'text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {loadingHubRoster ? (
+                      <div className="text-center py-8 text-xs text-slate-400">Loading {info.short} live roster...</div>
+                    ) : !hubRoster ? (
+                      <div className="text-center py-8 text-xs text-slate-400">Roster data unavailable right now.</div>
+                    ) : hubRosterView === 'il' ? (
+                      hubRoster.injuredList.length === 0 ? (
+                        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
+                          No players currently listed on the {info.short} Injured List.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                          {hubRoster.injuredList.map((p) => (
+                            <button
+                              key={p.playerId}
+                              type="button"
+                              onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
+                              className="p-3 rounded-xl border border-rose-500/25 bg-rose-500/5 hover:bg-rose-500/10 flex items-center justify-between text-left transition"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <PlayerAvatar playerId={p.playerId} playerName={p.fullName} teamAbbr={hubTeam} size="sm" />
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold truncate">{p.fullName}</div>
+                                  <div className="text-[11px] text-slate-500">{p.position} • Age {p.age}</div>
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-500 shrink-0">
+                                {p.statusDescription}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    ) : hubRosterView === 'depth' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {[
+                          { key: 'C', label: 'Catchers' },
+                          { key: 'IF', label: 'Infielders' },
+                          { key: 'OF', label: 'Outfielders' },
+                          { key: 'P', label: 'Pitchers' },
+                        ].map((grp) => (
+                          <div key={grp.key} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-2">
+                            <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                              <span>{grp.label}</span>
+                              <span>{(hubRoster.depthChart?.[grp.key] || []).length}</span>
+                            </div>
+                            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                              {(hubRoster.depthChart?.[grp.key] || []).map((p) => (
+                                <button
+                                  key={p.playerId}
+                                  type="button"
+                                  onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
+                                  className="w-full flex items-center justify-between text-xs p-1.5 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/80 text-left transition"
+                                >
+                                  <span className="font-bold truncate">
+                                    {p.jerseyNumber ? `#${p.jerseyNumber} ` : ''}{p.fullName}
+                                  </span>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ml-1 shrink-0">
+                                    {p.position}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                        {hubRoster.activePlayers.map((p) => (
+                          <button
+                            key={p.playerId}
+                            type="button"
+                            onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
+                            className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 hover:border-sky-500/40 flex items-center gap-2.5 text-left transition"
+                          >
+                            <PlayerAvatar playerId={p.playerId} playerName={p.fullName} teamAbbr={hubTeam} size="sm" />
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold truncate">
+                                {p.jerseyNumber ? `#${p.jerseyNumber} ` : ''}{p.fullName}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {p.position} • Age {p.age}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1934,95 +2233,134 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'leaderboard' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
-                  <DollarSign className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xl font-black">${leagueStats.totalSpent.toFixed(1)}M</div>
-                  <div className="text-xs text-slate-500">Disclosed Offseason Commitments</div>
-                </div>
-              </div>
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
-                  <Activity className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xl font-black">{transactions.length}</div>
-                  <div className="text-xs text-slate-500">Total MLB Transactions Tracked</div>
-                </div>
-              </div>
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
-                  <Trophy className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xl font-black">
-                    {leagueStats.mostActive?.team?.short || '—'}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    Most Active ({leagueStats.mostActive?.totalMoves || 0} moves)
-                  </div>
-                </div>
-              </div>
-            </div>
+        {/* Spending Tab with Offseason Year Switcher */}
+        {activeTab === 'leaderboard' && (() => {
+          const activeRows =
+            spendingApiData?.teams?.length > 0
+              ? spendingApiData.teams.map((t) => ({
+                  team: getTeamInfo(t.abbr),
+                  totalMillions: t.totalMillions,
+                  signingsCount: t.signingsCount,
+                  tradesCount: t.tradesCount || 0,
+                  totalMoves: t.totalMoves,
+                }))
+              : spendingLeaderboard;
+          const displaySpent = spendingApiData ? spendingApiData.totalSpent : leagueStats.totalSpent;
+          const displayMoves = spendingApiData ? spendingApiData.totalMoves : transactions.length;
+          const topClub = [...activeRows].sort((a, b) => b.totalMoves - a.totalMoves)[0];
+          const cycleMaxSpend = Math.max(1, ...activeRows.map((r) => r.totalMillions));
 
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-              <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          return (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-extrabold">Offseason Spending &amp; Activity Leaderboard</h2>
+                  <h2 className="text-xl font-extrabold">Offseason Spending &amp; Activity ({spendingCycle})</h2>
                   <p className="text-xs text-slate-500">
-                    Sorted by disclosed contract dollars, then total roster moves (click any team to open its Hub)
+                    {spendingApiData?.dataSource || 'Sorted by disclosed contract dollars, then total roster moves'}
                   </p>
                 </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
-                {spendingLeaderboard.map((row, idx) => {
-                  const pct = row.totalMillions > 0 ? Math.max(6, (row.totalMillions / maxTeamSpend) * 100) : 0;
-                  return (
-                    <div
-                      key={row.team.abbr}
-                      onClick={() => openTeamHub(row.team.abbr)}
-                      className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                  {['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => (
+                    <button
+                      key={cyc}
+                      onClick={() => setSpendingCycle(cyc)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                        spendingCycle === cyc
+                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                      }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
-                          <span
-                            className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
-                            style={{ backgroundColor: row.team.color }}
-                          >
-                            {row.team.abbr}
-                          </span>
-                          <span className="font-bold text-sm">{row.team.name}</span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-extrabold text-sm">
-                            ${row.totalMillions.toFixed(1)}M
-                          </span>
-                          <span className="ml-2 text-xs text-slate-400">
-                            ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
-                          </span>
-                        </div>
-                      </div>
-                      {pct > 0 && (
-                        <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${pct}%`, backgroundColor: row.team.color }}
-                          />
-                        </div>
-                      )}
+                      {cyc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                    <DollarSign className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xl font-black">${Number(displaySpent || 0).toFixed(1)}M</div>
+                    <div className="text-xs text-slate-500">Disclosed Commitments ({spendingCycle})</div>
+                  </div>
+                </div>
+                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xl font-black">{displayMoves}</div>
+                    <div className="text-xs text-slate-500">MLB Moves in {spendingCycle}</div>
+                  </div>
+                </div>
+                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                    <Trophy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xl font-black">{topClub?.team?.short || '—'}</div>
+                    <div className="text-xs text-slate-500">
+                      Most Active ({topClub?.totalMoves || 0} moves)
                     </div>
-                  );
-                })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                {loadingSpending ? (
+                  <div className="text-center py-12 text-xs text-slate-400">
+                    Loading {spendingCycle} MLB offseason activity...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
+                    {activeRows.map((row, idx) => {
+                      const pct = row.totalMillions > 0 ? Math.max(6, (row.totalMillions / cycleMaxSpend) * 100) : 0;
+                      return (
+                        <div
+                          key={row.team.abbr}
+                          onClick={() => openTeamHub(row.team.abbr)}
+                          className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
+                              <span
+                                className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
+                                style={{ backgroundColor: row.team.color }}
+                              >
+                                {row.team.abbr}
+                              </span>
+                              <span className="font-bold text-sm">{row.team.name}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-extrabold text-sm">
+                                ${row.totalMillions.toFixed(1)}M
+                              </span>
+                              <span className="ml-2 text-xs text-slate-400">
+                                ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
+                              </span>
+                            </div>
+                          </div>
+                          {pct > 0 && (
+                            <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                              <div
+                                className="h-full rounded-full"
+                                style={{ width: `${pct}%`, backgroundColor: row.team.color }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
