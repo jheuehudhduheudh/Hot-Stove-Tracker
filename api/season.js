@@ -165,17 +165,39 @@ async function handleLeaders(req, res) {
   const hitData = hitRes.ok ? await hitRes.json() : { leagueLeaders: [] };
   const pitchData = pitchRes.ok ? await pitchRes.json() : { leagueLeaders: [] };
 
+  const CATEGORY_ORDER = {
+    battingAverage: 1,
+    homeRuns: 2,
+    runsBattedIn: 3,
+    onBasePlusSlugging: 4,
+    hits: 5,
+    stolenBases: 6,
+    earnedRunAverage: 1,
+    wins: 2,
+    strikeouts: 3,
+    whip: 4,
+    saves: 5,
+    inningsPitched: 6,
+  };
+
+  const normalizeCat = (c) => {
+    if (c === 'walksAndHitsPerInningPitched') return 'whip';
+    return c;
+  };
+
   const formatBoard = (list) =>
-    (list || []).map((cat) => ({
-      category: cat.leaderCategory,
-      leaders: (cat.leaders || []).map((l) => ({
-        rank: l.rank,
-        value: l.value,
-        playerId: l.person?.id,
-        fullName: l.person?.fullName || 'Unknown',
-        teamAbbr: MLB_TEAM_ID_TO_ABBR[l.team?.id] || l.team?.abbreviation || 'MLB',
-      })),
-    }));
+    (list || [])
+      .map((cat) => ({
+        category: normalizeCat(cat.leaderCategory),
+        leaders: (cat.leaders || []).map((l) => ({
+          rank: l.rank,
+          value: l.value,
+          playerId: l.person?.id,
+          fullName: l.person?.fullName || 'Unknown',
+          teamAbbr: MLB_TEAM_ID_TO_ABBR[l.team?.id] || l.team?.abbreviation || 'MLB',
+        })),
+      }))
+      .sort((a, b) => (CATEGORY_ORDER[a.category] || 99) - (CATEGORY_ORDER[b.category] || 99));
 
   return res.status(200).json({
     season,
