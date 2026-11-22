@@ -284,6 +284,151 @@ async function handleRoster(req, res) {
   });
 }
 
+
+async function handleBoxScore(req, res) {
+  res.setHeader('Cache-Control', 's-maxage=20, stale-while-revalidate=60');
+  const gamePk = req.query?.gamePk;
+  if (!gamePk || !/^\d+$/.test(String(gamePk))) {
+    return res.status(400).json({ error: 'Valid numeric gamePk is required' });
+  }
+
+  const [boxRes, lineRes, schedRes] = await Promise.all([
+    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`),
+    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`),
+    fetch(`https://statsapi.mlb.com/api/v1/schedule?gamePk=${gamePk}&hydrate=decisions,team,venue`),
+  ]);
+
+  if (!boxRes.ok) {
+    return res.status(boxRes.status).json({ error: `MLB boxscore API returned ${boxRes.status}` });
+  }
+
+  const boxData = await boxRes.json();
+  const lineData = lineRes.ok ? await lineRes.json() : {};
+  const schedData = schedRes.ok ? await schedRes.json() : {};
+  const schedGame = schedData?.dates?.[0]?.games?.[0] || {};
+
+  const parseSide = (sideData) => {
+    const teamObj = sideData?.team || {};
+    const playersMap = sideData?.players || {};
+    const battersOrder = sideData?.batters || [];
+    const pitchersOrder = sideData?.pitchers || [];
+
+    const batters = battersOrder
+      .map((id) => playersMap[`ID${id}`])
+      .filter((p) => p && p.stats?.batting && Object.keys(p.stats.batting).length > 0)
+      .map((p) => ({
+        playerId: p.person?.id,
+        fullName: p.person?.fullName || 'Unknown',
+        position: p.position?.abbreviation || p.allPositions?.[0]?.abbreviation || '',
+        battingOrder: p.battingOrder || '',
+        isSub: Boolean(p.battingOrder && Number(p.battingOrder) % 100 !== 0),
+        ab: p.stats.batting.atBats ?? 0,
+        r: p.stats.batting.runs ?? 0,
+        h: p.stats.batting.hits ?? 0,
+        rbi: p.stats.batting.rbi ?? 0,
+        bb: p.stats.batting.baseOnBalls ?? 0,
+        so: p.stats.batting.strikeOuts ?? 0,
+        hr: p.stats.batting.homeRuns ?? 0,
+        avg: p.seasonStats?.batting?.avg || '—',
+        ops: p.seasonStats?.batting?.ops || '—',
+        summary: p.stats.batting.summary || '',
+      }));
+
+    const pitchers = pitchersOrder
+      .map((id) => playersMap[`ID${id}`])
+      .filter((p) => p && p.stats?.pitching && Object.keys(p.stats.pitching).length > 0)
+      .map((p) => ({
+        playerId: p.person?.id,
+        fullName: p.person?.fullName || 'Unknown',
+        note: p.stats.pitching.note || '',
+        ip: p.stats.pitching.inningsPitched || '0.0',
+        h: p.stats.pitching.hits ?? 0,
+        r: p.stats.pitching.runs ?? 0,
+        er: p.stats.pitching.earnedRuns ?? 0,
+        bb: p.stats.pitching.baseOnBalls ?? 0,
+        so: p.stats.pitching.strikeOuts ?? 0,
+        hr: p.stats.pitching.homeRuns ?? 0,
+        pitches: p.stats.pitching.numberOfPitches ?? null,
+        strikes: p.stats.pitching.strikes ?? null,
+        era: p.seasonStats?.pitching?.era || '—',
+      }));
+
+    const battingNotes = [];
+    for (const blk of sideData?.info || []) {
+      if (blk?.title === 'BATTING' && Array.isArray(blk.fieldList)) {
+        for (const f of blk.fieldList) {
+          if (['HR', '2B', '3B', 'TB', 'RBI'].includes(f.label)) {
+            battingNotes.push({ label: f.label, value: f.value });
+          }
+        }
+      }
+    }
+
+    return {
+      id: teamObj.id,
+      abbr: MLB_TEAM_ID_TO_ABBR[teamObj.id] || teamObj.abbreviation || 'MLB',
+      name: teamObj.name || 'Team',
+      teamBatting: sideData?.teamStats?.batting || {},
+      teamPitching: sideData?.teamStats?.pitching || {},
+      batters,
+      pitchers,
+      battingNotes,
+    };
+  };
+
+  const innings = (lineData?.innings || []).map((inn) => ({
+    num: inn.num,
+    ordinal: inn.ordinalNum,
+    awayRuns: inn.away?.runs ?? null,
+    homeRuns: inn.home?.runs ?? null,
+  }));
+
+  const gameInfo = (boxData?.info || [])
+    .filter((f) => ['Weather', 'Wind', 'First pitch', 'T', 'Att', 'Venue'].includes(f.label))
+    .map((f) => ({ label: f.label, value: f.value }));
+
+  const offense = lineData?.offense || {};
+
+  return res.status(200).json({
+    gamePk: Number(gamePk),
+    status: schedGame?.status?.detailedState || (lineData?.currentInningOrdinal ? `${lineData.inningHalf || ''} ${lineData.currentInningOrdinal}` : 'Game Box Score'),
+    abstractState: schedGame?.status?.abstractGameState || (lineData?.currentInning ? 'Live' : 'Preview'),
+    venue: schedGame?.venue?.name || '',
+    gameDate: schedGame?.gameDate || '',
+    linescore: {
+      currentInning: lineData?.currentInningOrdinal || null,
+      inningHalf: lineData?.inningHalf || null,
+      outs: lineData?.outs ?? null,
+      balls: lineData?.balls ?? null,
+      strikes: lineData?.strikes ?? null,
+      onFirst: Boolean(offense.first),
+      onSecond: Boolean(offense.second),
+      onThird: Boolean(offense.third),
+      innings,
+      away: {
+        runs: lineData?.teams?.away?.runs ?? 0,
+        hits: lineData?.teams?.away?.hits ?? 0,
+        errors: lineData?.teams?.away?.errors ?? 0,
+        lob: lineData?.teams?.away?.leftOnBase ?? 0,
+      },
+      home: {
+        runs: lineData?.teams?.home?.runs ?? 0,
+        hits: lineData?.teams?.home?.hits ?? 0,
+        errors: lineData?.teams?.home?.errors ?? 0,
+        lob: lineData?.teams?.home?.leftOnBase ?? 0,
+      },
+    },
+    decisions: {
+      winner: schedGame?.decisions?.winner?.fullName || null,
+      loser: schedGame?.decisions?.loser?.fullName || null,
+      save: schedGame?.decisions?.save?.fullName || null,
+    },
+    away: parseSide(boxData?.teams?.away),
+    home: parseSide(boxData?.teams?.home),
+    gameInfo,
+  });
+}
+
 export default async function handler(req, res) {
   const type = String(req.query?.type || 'scores').toLowerCase();
   try {
@@ -291,6 +436,7 @@ export default async function handler(req, res) {
     if (type === 'standings') return await handleStandings(req, res);
     if (type === 'leaders') return await handleLeaders(req, res);
     if (type === 'roster') return await handleRoster(req, res);
+    if (type === 'boxscore') return await handleBoxScore(req, res);
     return res.status(400).json({ error: `Unknown season query type: ${type}` });
   } catch (err) {
     return res.status(500).json({ error: `Season API error: ${err.message}` });
