@@ -1,34 +1,112 @@
 import { createClient } from '@supabase/supabase-js';
 
-const TEAM_MAP = {
-  angels: 'LAA', diamondbacks: 'ARI', orioles: 'BAL', 'red sox': 'BOS',
-  cubs: 'CHC', reds: 'CIN', guardians: 'CLE', rockies: 'COL',
-  tigers: 'DET', astros: 'HOU', royals: 'KC', dodgers: 'LAD',
-  nationals: 'WSH', mets: 'NYM', athletics: 'ATH', pirates: 'PIT',
-  padres: 'SD', mariners: 'SEA', giants: 'SF', cardinals: 'STL',
-  rays: 'TB', rangers: 'TEX', 'blue jays': 'TOR', twins: 'MIN',
-  phillies: 'PHI', braves: 'ATL', 'white sox': 'CWS', marlins: 'MIA',
-  yankees: 'NYY', brewers: 'MIL'
+const MLB_TEAM_ID_TO_ABBR = {
+  108: 'LAA', 109: 'ARI', 110: 'BAL', 111: 'BOS', 112: 'CHC',
+  113: 'CIN', 114: 'CLE', 115: 'COL', 116: 'DET', 117: 'HOU',
+  118: 'KC',  119: 'LAD', 120: 'WSH', 121: 'NYM', 133: 'ATH',
+  134: 'PIT', 135: 'SD',  136: 'SEA', 137: 'SF',  138: 'STL',
+  139: 'TB',  140: 'TEX', 141: 'TOR', 142: 'MIN', 143: 'PHI',
+  144: 'ATL', 145: 'CWS', 146: 'MIA', 147: 'NYY', 158: 'MIL',
 };
 
-function detectTeam(text) {
+const ALL_MLB_TEAM_IDS = Object.keys(MLB_TEAM_ID_TO_ABBR).join(',');
+
+const TEAM_NAME_PATTERNS = [
+  ['los angeles angels', 'LAA'], ['angels', 'LAA'],
+  ['arizona diamondbacks', 'ARI'], ['diamondbacks', 'ARI'], ['d-backs', 'ARI'],
+  ['baltimore orioles', 'BAL'], ['orioles', 'BAL'],
+  ['boston red sox', 'BOS'], ['red sox', 'BOS'],
+  ['chicago cubs', 'CHC'], ['cubs', 'CHC'],
+  ['cincinnati reds', 'CIN'], ['reds', 'CIN'],
+  ['cleveland guardians', 'CLE'], ['guardians', 'CLE'],
+  ['colorado rockies', 'COL'], ['rockies', 'COL'],
+  ['detroit tigers', 'DET'], ['tigers', 'DET'],
+  ['houston astros', 'HOU'], ['astros', 'HOU'],
+  ['kansas city royals', 'KC'], ['royals', 'KC'],
+  ['los angeles dodgers', 'LAD'], ['dodgers', 'LAD'],
+  ['washington nationals', 'WSH'], ['nationals', 'WSH'], ['nats', 'WSH'],
+  ['new york mets', 'NYM'], ['mets', 'NYM'],
+  ['athletics', 'ATH'], ["a's", 'ATH'],
+  ['pittsburgh pirates', 'PIT'], ['pirates', 'PIT'],
+  ['san diego padres', 'SD'], ['padres', 'SD'],
+  ['seattle mariners', 'SEA'], ['mariners', 'SEA'],
+  ['san francisco giants', 'SF'], ['giants', 'SF'],
+  ['st. louis cardinals', 'STL'], ['cardinals', 'STL'],
+  ['tampa bay rays', 'TB'], ['rays', 'TB'],
+  ['texas rangers', 'TEX'], ['rangers', 'TEX'],
+  ['toronto blue jays', 'TOR'], ['blue jays', 'TOR'], ['jays', 'TOR'],
+  ['minnesota twins', 'MIN'], ['twins', 'MIN'],
+  ['philadelphia phillies', 'PHI'], ['phillies', 'PHI'],
+  ['atlanta braves', 'ATL'], ['braves', 'ATL'],
+  ['chicago white sox', 'CWS'], ['white sox', 'CWS'],
+  ['miami marlins', 'MIA'], ['marlins', 'MIA'],
+  ['new york yankees', 'NYY'], ['yankees', 'NYY'],
+  ['milwaukee brewers', 'MIL'], ['brewers', 'MIL'],
+];
+
+const WORD_NUMBERS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+};
+
+function decodeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectTeamFromText(text) {
   const lower = (text || '').toLowerCase();
-  for (const [name, abbr] of Object.entries(TEAM_MAP)) {
-    if (lower.includes(name)) return abbr;
+  for (const [pattern, abbr] of TEAM_NAME_PATTERNS) {
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(^|[^a-z])${escaped}([^a-z]|$)`, 'i');
+    if (regex.test(lower)) return abbr;
   }
   return null;
 }
 
-function parseContractRegex(text) {
-  const yearsMatch = text.match(/(\d+)[-\s]year/i);
-  const moneyMatch = text.match(/\$(\d+(?:\.\d+)?)\s*(M|million|B|billion)/i);
-  const years = yearsMatch ? parseInt(yearsMatch[1], 10) : null;
-  let totalMillions = null;
-  if (moneyMatch) {
-    const num = parseFloat(moneyMatch[1]);
-    const unit = moneyMatch[2].toLowerCase();
-    totalMillions = unit.startsWith('b') ? num * 1000 : num;
+function parseContractDetails(title, description = '') {
+  const combined = `${title} ${description}`;
+  let years = null;
+
+  const digitYears = combined.match(/(\d+)[-\s]year/i);
+  if (digitYears) {
+    years = parseInt(digitYears[1], 10);
+  } else {
+    const wordYears = combined.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s]year\b/i);
+    if (wordYears) years = WORD_NUMBERS[wordYears[1].toLowerCase()] || null;
   }
+
+  let totalMillions = null;
+  const moneyMatch = combined.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)\s*(MM|M|million|B|billion|K|thousand)?\b/i);
+  if (moneyMatch) {
+    const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
+    const unit = (moneyMatch[2] || '').toLowerCase();
+    if (unit === 'b' || unit === 'billion') {
+      totalMillions = Number((rawNum * 1000).toFixed(2));
+    } else if (unit === 'mm' || unit === 'm' || unit === 'million') {
+      totalMillions = Number(rawNum.toFixed(2));
+    } else if (unit === 'k' || unit === 'thousand') {
+      totalMillions = Number((rawNum / 1000).toFixed(3));
+    } else if (rawNum >= 500000) {
+      totalMillions = Number((rawNum / 1000000).toFixed(2));
+    }
+  }
+
+  if (years && (years < 1 || years > 15)) years = null;
+  if (totalMillions && (totalMillions < 0.5 || totalMillions > 1500)) totalMillions = null;
+
   const aav = years && totalMillions ? Number((totalMillions / years).toFixed(2)) : null;
   return { years, totalMillions, aav };
 }
@@ -52,37 +130,56 @@ async function lookupPlayerId(playerName) {
 function parseRssItems(xml) {
   const items = [];
   const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
-  for (const block of itemBlocks.slice(0, 30)) {
-    const title = (block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1] ||
-      block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '').trim();
+
+  const speculationPattern = /(receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|listening\s+to|could\s+|might\s+|rumors|mailbag|live\s+chat|poll|predictions|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|expected\s+to\s+shop|shopping\s+)/i;
+  const actionPattern = /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|acquire|acquires|acquired|trade|trades|traded|extend|extends|extended|extension|designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|exercise|exercises|exercised|decline|declines|declined|accept|accepts|accepted|qualifying\s+offer|outright|outrighted)\b/i;
+
+  for (const block of itemBlocks.slice(0, 45)) {
+    const rawTitle =
+      block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1] ||
+      block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ||
+      '';
+    const rawDesc =
+      block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1] ||
+      block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ||
+      '';
     const link = (block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '').trim();
     const pubDate = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '').trim();
-    const categories = [...block.matchAll(/<category>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/category>/gi)]
-      .map((m) => m[1].trim().toLowerCase());
 
-    const isTransaction =
-      categories.some((c) => ['signings', 'trades', 'extensions', 'transactions', 'designations', 'waivers'].includes(c)) ||
-      /(agree|sign|acquire|trade|extend|designate|claim)/i.test(title);
+    const title = decodeHtml(rawTitle);
+    const description = decodeHtml(rawDesc);
 
-    if (!isTransaction || !title) continue;
+    if (!title) continue;
+    if (speculationPattern.test(title)) continue;
+    if (!actionPattern.test(title)) continue;
 
-    const isMinorLeague = /minor league/i.test(title);
-    const moveType = categories.includes('trades') || /acquire|trade/i.test(title)
-      ? 'TRADE'
-      : categories.includes('extensions') || /extend/i.test(title)
-      ? 'EXTENSION'
-      : /designate|waiver|claim/i.test(title)
-      ? 'DFA_WAIVER'
-      : 'SIGNING';
+    const team = detectTeamFromText(title);
+    if (!team) continue;
 
-    const team = detectTeam(title);
-    const { years, totalMillions, aav } = parseContractRegex(title);
+    const isMinorLeague = /minor league/i.test(title) || /minor league deal/i.test(description);
+
+    let moveType = 'SIGNING';
+    if (/\b(acquire|acquires|acquired|trade|trades|traded)\b/i.test(title)) {
+      moveType = 'TRADE';
+    } else if (/\b(extend|extends|extended|extension)\b/i.test(title)) {
+      moveType = 'EXTENSION';
+    } else if (/\b(designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|outright|outrighted|decline|declines|declined)\b/i.test(title)) {
+      moveType = 'DFA_WAIVER';
+    }
+
+    const { years, totalMillions, aav } = parseContractDetails(title, description);
 
     let playerName = null;
-    const agreeMatch = title.match(/^[A-Za-z\s]+,\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)\s+Agree/i);
-    const signMatch = title.match(/(?:Sign|Acquire|Extend|Designate|Claim)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/i);
+    const agreeMatch = title.match(/^[A-Za-z\s.'-]+,\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)\s+Agree/i);
+    const verbMatch = title.match(/\b(?:Sign|Signs|Re-Sign|Re-Signs|Acquire|Acquires|Extend|Extends|Designate|Designates|Claim|Claims|Release|Releases|Non-Tender|Non-Tenders|Exercise|Decline)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/);
     if (agreeMatch) playerName = agreeMatch[1].trim();
-    else if (signMatch) playerName = signMatch[1].trim();
+    else if (verbMatch) playerName = verbMatch[1].trim();
+
+    if (playerName && /^(To |A |An |The |Club |Mutual |Player |Two |Three |Four |Five |Minor |Major )/i.test(playerName)) {
+      playerName = null;
+    }
+
+    const notesSnippet = description.length > 140 ? `${description.slice(0, 140)}...` : description;
 
     items.push({
       external_id: `mlbtr-${Buffer.from(link || title).toString('base64').slice(0, 48)}`,
@@ -97,6 +194,7 @@ function parseRssItems(xml) {
       contract_years: years,
       total_value_millions: totalMillions,
       aav_millions: aav,
+      contract_notes: notesSnippet,
     });
   }
   return items;
@@ -113,7 +211,6 @@ export default async function handler(req, res) {
   const supabase = createClient(supabaseUrl, serviceKey);
   const force = req.query?.force === 'true' || req.body?.force === true;
 
-  // 1. Check 5-minute cooldown
   const { data: meta, error: metaError } = await supabase
     .from('sync_metadata')
     .select('*')
@@ -138,22 +235,41 @@ export default async function handler(req, res) {
     }
   }
 
+  // Auto-clean winter league / minor-league / broken HTML rows from earlier syncs
+  try {
+    await supabase.from('transactions').delete().is('to_team', null).is('from_team', null).is('team_a', null);
+    await supabase.from('transactions').delete().ilike('headline', '%assigned to%');
+    await supabase.from('transactions').delete().ilike('headline', '%&#%');
+    await supabase.from('transactions').delete().ilike('headline', '%Receiving Trade Interest%');
+  } catch (cleanErr) {
+    console.error('Cleanup warning:', cleanErr.message);
+  }
+
   let addedCount = 0;
   let upgradedCount = 0;
 
-  // 2. Fetch & Parse MLB Trade Rumors RSS (Stage 1: REPORTED)
-  try {
-    const rssRes = await fetch('https://www.mlbtraderumors.com/feed', {
-      headers: { 'User-Agent': 'HotStoveTracker/1.1' },
-    });
-    if (rssRes.ok) {
+  const rssFeeds = [
+    'https://www.mlbtraderumors.com/feed',
+    'https://www.mlbtraderumors.com/category/transactions/feed',
+  ];
+  const seenExtIds = new Set();
+
+  for (const feedUrl of rssFeeds) {
+    try {
+      const rssRes = await fetch(feedUrl, {
+        headers: { 'User-Agent': 'HotStoveTracker/1.2' },
+      });
+      if (!rssRes.ok) continue;
       const xml = await rssRes.text();
       const parsedRumors = parseRssItems(xml);
 
       for (const item of parsedRumors) {
+        if (seenExtIds.has(item.external_id)) continue;
+        seenExtIds.add(item.external_id);
+
         const { data: existing } = await supabase
           .from('transactions')
-          .select('id')
+          .select('id, contract_years, total_value_millions')
           .eq('external_id', item.external_id)
           .maybeSingle();
 
@@ -166,21 +282,31 @@ export default async function handler(req, res) {
             position: person?.position || null,
           });
           if (!insertErr) addedCount++;
+        } else if (!existing.total_value_millions && item.total_value_millions) {
+          await supabase
+            .from('transactions')
+            .update({
+              contract_years: item.contract_years,
+              total_value_millions: item.total_value_millions,
+              aav_millions: item.aav_millions,
+              contract_notes: item.contract_notes,
+            })
+            .eq('id', existing.id);
         }
       }
+    } catch (err) {
+      console.error('RSS sync warning:', err.message);
     }
-  } catch (err) {
-    console.error('RSS sync warning:', err.message);
   }
 
-  // 3. Fetch Official MLB Stats API Transactions (last 14 days, Stage 2: OFFICIAL)
+  // Official MLB Stats API Transactions — STRICTLY 30 MLB Teams Only (Last 30 Days)
   try {
     const end = new Date();
-    const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().slice(0, 10);
 
     const mlbRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/transactions?startDate=${fmt(start)}&endDate=${fmt(end)}`
+      `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${fmt(start)}&endDate=${fmt(end)}`
     );
     if (mlbRes.ok) {
       const mlbData = await mlbRes.json();
@@ -188,27 +314,36 @@ export default async function handler(req, res) {
 
       const tradeGroups = new Map();
       const singleTx = [];
+      const ALLOWED_SINGLE_CODES = new Set(['SFA', 'SGN', 'CLW', 'DFA', 'REL', 'SE', 'OUT']);
 
       for (const tx of rawTx) {
+        const toMlb = MLB_TEAM_ID_TO_ABBR[tx.toTeam?.id] || null;
+        const fromMlb = MLB_TEAM_ID_TO_ABBR[tx.fromTeam?.id] || null;
+        const desc = tx.description || '';
+
+        if (!toMlb && !fromMlb) continue;
+        if (/\bassigned to\b/i.test(desc)) continue;
+
         if (tx.typeCode === 'TR') {
-          const key = tx.tradeId || `${tx.date}-${tx.description}`;
+          const key = tx.tradeId || `${tx.date}-${desc.slice(0, 40)}`;
           if (!tradeGroups.has(key)) tradeGroups.set(key, []);
           tradeGroups.get(key).push(tx);
-        } else if (['SFA', 'SGN', 'ASG', 'CLW', 'DFA', 'OPT', 'REL', 'NUM'].includes(tx.typeCode)) {
-          singleTx.push(tx);
+        } else if (ALLOWED_SINGLE_CODES.has(tx.typeCode)) {
+          if (['SFA', 'SGN', 'CLW', 'SE'].includes(tx.typeCode) && !toMlb) continue;
+          singleTx.push({ ...tx, _toMlb: toMlb, _fromMlb: fromMlb });
         }
       }
 
-      for (const tx of singleTx.slice(-80)) {
+      for (const tx of singleTx.slice(-100)) {
         const extId = `mlb-tx-${tx.id}`;
         const playerName = tx.person?.fullName || 'Unknown Player';
-        const toTeam = detectTeam(tx.toTeam?.name || '');
-        const fromTeam = detectTeam(tx.fromTeam?.name || '');
-        const desc = tx.description || `${tx.toTeam?.name || 'MLB'} transaction involving ${playerName}`;
+        const toTeam = tx._toMlb;
+        const fromTeam = tx._fromMlb;
+        const desc = decodeHtml(tx.description || `${tx.toTeam?.name || 'MLB'} transaction involving ${playerName}`);
         const isMinor = /minor league/i.test(desc);
-        const moveType = ['DFA', 'CLW', 'REL', 'NUM'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
+        const moveType = ['DFA', 'CLW', 'REL', 'OUT'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
 
-        if (toTeam && playerName) {
+        if (toTeam && playerName && playerName !== 'Unknown Player') {
           const { data: matchingReported } = await supabase
             .from('transactions')
             .select('*')
@@ -253,7 +388,7 @@ export default async function handler(req, res) {
             player_id: tx.person?.id || null,
             player_name: playerName,
             from_team: fromTeam,
-            to_team: toTeam,
+            to_team: toTeam || fromTeam,
           });
           if (!insertErr) addedCount++;
         }
@@ -270,15 +405,15 @@ export default async function handler(req, res) {
         if (exists) continue;
 
         const first = items[0];
-        const teamA = detectTeam(first.toTeam?.name || '') || 'TEAM A';
-        const teamB = detectTeam(first.fromTeam?.name || '') || 'TEAM B';
+        const teamA = MLB_TEAM_ID_TO_ABBR[first.toTeam?.id] || detectTeamFromText(first.toTeam?.name) || 'MLB';
+        const teamB = MLB_TEAM_ID_TO_ABBR[first.fromTeam?.id] || detectTeamFromText(first.fromTeam?.name) || 'MLB';
 
         const teamAReceives = [];
         const teamBReceives = [];
         let hasMlbPlayer = false;
 
         for (const leg of items) {
-          const dest = detectTeam(leg.toTeam?.name || '');
+          const dest = MLB_TEAM_ID_TO_ABBR[leg.toTeam?.id] || detectTeamFromText(leg.toTeam?.name);
           const entry = {
             playerId: leg.person?.id || null,
             playerName: leg.person?.fullName || 'Cash / PTBNL',
@@ -296,7 +431,7 @@ export default async function handler(req, res) {
           status: 'OFFICIAL',
           move_type: 'TRADE',
           is_major_league: hasMlbPlayer,
-          headline: first.description || `${teamA} and ${teamB} Complete Trade`,
+          headline: decodeHtml(first.description || `${teamA} and ${teamB} Complete Trade`),
           source_name: 'MLB.com Official',
           source_url: 'https://www.mlb.com/transactions',
           reported_at: first.date ? new Date(first.date).toISOString() : new Date().toISOString(),
@@ -316,7 +451,7 @@ export default async function handler(req, res) {
   }
 
   const nowIso = new Date().toISOString();
-  const summary = `Added ${addedCount} new, upgraded ${upgradedCount} to Official`;
+  const summary = `Synced MLB feed: ${addedCount} new moves, ${upgradedCount} upgraded to Official`;
   await supabase
     .from('sync_metadata')
     .upsert({ id: 1, last_synced_at: nowIso, last_sync_summary: summary });
