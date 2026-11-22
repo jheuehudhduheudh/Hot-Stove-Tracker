@@ -4,14 +4,15 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
-const FA_CLASS_YEARS = ['2026', '2025', '2024', '2023', '2022'];
-const SEASON_YEARS = ['2026', '2025', '2024', '2023', '2022'];
+const FA_CLASS_YEARS = Array.from({ length: 12 }, (_, i) => String(2026 - i)); // 2026 -> 2015
+const ALL_SEASON_YEARS = Array.from({ length: 27 }, (_, i) => String(2026 - i)); // 2026 -> 2000
+const QUICK_YEARS = ['2026', '2025', '2024'];
 
 const QUICK_JUMP_DATES = [
   { label: '2026 WS G5 (MIL @ TB)', date: '2026-10-28' },
@@ -29,19 +30,72 @@ function getInitialUrlParams() {
 }
 
 const LEADER_LABELS = {
-  homeRuns: 'Home Runs (HR)',
   battingAverage: 'Batting Average (AVG)',
-  onBasePlusSlugging: 'OPS',
+  homeRuns: 'Home Runs (HR)',
   runsBattedIn: 'Runs Batted In (RBI)',
-  stolenBases: 'Stolen Bases (SB)',
+  onBasePlusSlugging: 'OPS',
   hits: 'Hits (H)',
+  stolenBases: 'Stolen Bases (SB)',
   earnedRunAverage: 'ERA',
-  whip: 'WHIP',
-  strikeouts: 'Strikeouts (SO)',
-  saves: 'Saves (SV)',
   wins: 'Wins (W)',
+  strikeouts: 'Strikeouts (SO)',
+  whip: 'WHIP',
+  walksAndHitsPerInningPitched: 'WHIP',
+  saves: 'Saves (SV)',
   inningsPitched: 'Innings Pitched (IP)',
 };
+
+const LEADER_ORDER = {
+  battingAverage: 1,
+  homeRuns: 2,
+  runsBattedIn: 3,
+  onBasePlusSlugging: 4,
+  hits: 5,
+  stolenBases: 6,
+  earnedRunAverage: 1,
+  wins: 2,
+  strikeouts: 3,
+  whip: 4,
+  walksAndHitsPerInningPitched: 4,
+  saves: 5,
+  inningsPitched: 6,
+};
+
+function formatLeaderCategory(cat) {
+  if (!cat) return 'Stat';
+  if (LEADER_LABELS[cat]) return LEADER_LABELS[cat];
+  return String(cat)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (s) => s.toUpperCase());
+}
+
+function getWcCutoffIndex(seasonStr) {
+  const yr = Number(seasonStr);
+  if (yr >= 2022) return 2;       // Top 3 Wild Card teams
+  if (yr === 2020) return -1;     // Expanded 2020 format (no standard WC line)
+  if (yr >= 2012) return 1;       // Top 2 Wild Card teams
+  if (yr >= 1995) return 0;       // Single Wild Card team
+  return -1;
+}
+
+// Compute WCAG luminance so gold/yellow badges (SD, PIT) get dark text and dark-navy badges (MIL, TB, NYY, SEA, MIN) get a crisp border
+function getTeamBadgeStyle(hexColor) {
+  const hex = String(hexColor || '#334155').replace('#', '');
+  let r = 51, g = 65, b = 85;
+  if (hex.length === 6) {
+    r = parseInt(hex.slice(0, 2), 16);
+    g = parseInt(hex.slice(2, 4), 16);
+    b = parseInt(hex.slice(4, 6), 16);
+  }
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const isLight = lum > 0.62;
+  const isVeryDark = lum < 0.24;
+  return {
+    backgroundColor: hexColor || '#334155',
+    color: isLight ? '#0f172a' : '#ffffff',
+    border: isVeryDark ? '1px solid rgba(148, 163, 184, 0.38)' : '1px solid rgba(255, 255, 255, 0.12)',
+  };
+}
 
 function isFreeAgencyElection(tx) {
   const h = (tx?.headline || '').toLowerCase();
@@ -97,6 +151,189 @@ function BrandLogo({ className = 'w-9 h-9' }) {
       <path d="M45 60L50 58M46 66L51 65M46 74L51 75M45 80L50 82" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" />
       <path d="M75 60L70 58M74 66L69 65M74 74L69 75M75 80L70 82" stroke="#e11d48" strokeWidth="2" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function BaseballLoader({ label = 'Loading MLB data...', compact = false }) {
+  return (
+    <div className={`flex flex-col items-center justify-center ${compact ? 'py-8 gap-3' : 'py-14 gap-4'} animate-fade-up`}>
+      <div className="relative flex items-center justify-center w-14 h-14">
+        <span className="absolute inset-0 rounded-full border-2 border-sky-500/45 animate-pulse-ring" />
+        <span
+          className="absolute inset-1 rounded-full border border-rose-500/40 animate-pulse-ring"
+          style={{ animationDelay: '0.45s' }}
+        />
+        <svg viewBox="0 0 64 64" className="w-11 h-11 animate-spin-ball drop-shadow-md">
+          <circle cx="32" cy="32" r="28" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="2.5" />
+          <path d="M16 14C24 23 24 41 16 50" fill="none" stroke="#e11d48" strokeWidth="3" strokeLinecap="round" />
+          <path d="M48 14C40 23 40 41 48 50" fill="none" stroke="#e11d48" strokeWidth="3" strokeLinecap="round" />
+          <path d="M13 21L19 19M15 28L21 27M15 36L21 37M13 43L19 45" stroke="#e11d48" strokeWidth="2.2" strokeLinecap="round" />
+          <path d="M51 21L45 19M49 28L43 27M49 36L43 37M51 43L45 45" stroke="#e11d48" strokeWidth="2.2" strokeLinecap="round" />
+        </svg>
+      </div>
+      <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-500 dark:text-slate-300">
+        <span>{label}</span>
+        <span className="inline-flex items-center gap-0.5 ml-0.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-sky-500 hst-dot-1" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 hst-dot-2" />
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 hst-dot-3" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function FeedSkeleton() {
+  return (
+    <div className="space-y-3 animate-fade-up">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div
+          key={i}
+          className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-20 rounded-full hst-shimmer" />
+              <div className="h-5 w-24 rounded-md hst-shimmer" />
+            </div>
+            <div className="h-3.5 w-28 rounded hst-shimmer" />
+          </div>
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-full hst-shimmer shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-3/4 rounded hst-shimmer" />
+              <div className="h-3 w-1/2 rounded hst-shimmer" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CardsGridSkeleton({ count = 6, label = '' }) {
+  return (
+    <div className="space-y-4 animate-fade-up">
+      {label && <BaseballLoader label={label} compact />}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+        {Array.from({ length: count }).map((_, i) => (
+          <div
+            key={i}
+            className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3"
+          >
+            <div className="w-12 h-12 rounded-full hst-shimmer shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-2/3 rounded hst-shimmer" />
+              <div className="h-3 w-1/3 rounded hst-shimmer" />
+              <div className="h-3 w-5/6 rounded hst-shimmer" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeadersSkeleton({ label = 'Loading MLB leaders...' }) {
+  return (
+    <div className="space-y-4 animate-fade-up">
+      <BaseballLoader label={label} compact />
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
+              <div className="h-4 w-32 rounded hst-shimmer" />
+              <div className="h-3.5 w-10 rounded hst-shimmer" />
+            </div>
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full hst-shimmer" />
+                <div className="space-y-2">
+                  <div className="h-3 w-16 rounded hst-shimmer" />
+                  <div className="h-4 w-28 rounded hst-shimmer" />
+                </div>
+              </div>
+              <div className="h-7 w-14 rounded hst-shimmer" />
+            </div>
+            <div className="p-3 space-y-2.5">
+              {[0, 1, 2, 3, 4].map((r) => (
+                <div key={r} className="flex items-center justify-between">
+                  <div className="h-3 w-36 rounded hst-shimmer" />
+                  <div className="h-3 w-10 rounded hst-shimmer" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StandingsSkeleton({ label = 'Loading MLB standings...' }) {
+  return (
+    <div className="space-y-4 animate-fade-up">
+      <BaseballLoader label={label} compact />
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
+          >
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="h-4 w-24 rounded hst-shimmer" />
+            </div>
+            <div className="p-4 space-y-3">
+              {[0, 1, 2, 3, 4].map((r) => (
+                <div key={r} className="flex items-center justify-between gap-3">
+                  <div className="h-4 w-28 rounded hst-shimmer" />
+                  <div className="h-3.5 w-32 rounded hst-shimmer" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function YearPicker({ value, onChange, years = ALL_SEASON_YEARS, quickYears = QUICK_YEARS }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+      {quickYears.map((yr) => (
+        <button
+          key={yr}
+          onClick={() => onChange(yr)}
+          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+            String(value) === String(yr)
+              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          {yr}
+        </button>
+      ))}
+      <select
+        aria-label="Select Season Year"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`px-2 py-1 rounded-lg text-xs font-bold cursor-pointer focus:outline-none transition ${
+          !quickYears.includes(String(value))
+            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+            : 'bg-transparent text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+        }`}
+      >
+        {years.map((yr) => (
+          <option key={yr} value={yr} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+            {yr}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -289,6 +526,15 @@ export default function App() {
   const [activeHighlight, setActiveHighlight] = useState(null);
   const [videoError, setVideoError] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [recentPlayers, setRecentPlayers] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hst_recent_players');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const skipUrlSyncRef = useRef(false);
 
   const openTeamHub = (abbr) => {
@@ -327,6 +573,21 @@ export default function App() {
         const data = await res.json();
         setPlayerStats(data);
         setProfileStatGroup(data.isPitcher ? 'pitching' : 'hitting');
+        if (data?.id && data?.fullName) {
+          setRecentPlayers((prev) => {
+            const entry = {
+              id: data.id,
+              fullName: data.fullName,
+              position: data.position || 'MLB',
+              teamAbbr: data.currentTeamAbbr || teamAbbr || 'MLB',
+            };
+            const next = [entry, ...prev.filter((x) => x.id !== data.id)].slice(0, 5);
+            try {
+              localStorage.setItem('hst_recent_players', JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+        }
         if (data?.savant?.year) setSavantYear(String(data.savant.year));
         if (data?.splits?.season) setSplitsYear(String(data.splits.season));
       }
@@ -634,6 +895,13 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer]);
+
+  // Track scroll position for floating Back-to-Top button
+  useEffect(() => {
+    const onScroll = () => setShowBackToTop(window.scrollY > 420);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   // Smart 30-second Live Auto-Polling for Scoreboard (only runs if at least 1 game is Live)
   const hasLiveGames = useMemo(() => games.some((g) => g.abstractState === 'Live'), [games]);
@@ -1251,8 +1519,8 @@ export default function App() {
               </div>
 
               {loadingPlayerStats ? (
-                <div className="p-12 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
-                  Loading full MLB career stats, splits, postseason history &amp; Baseball Savant Statcast profile...
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                  <BaseballLoader label="Loading career stats, splits & Baseball Savant profile" />
                 </div>
               ) : !playerStats ? (
                 <div className="p-12 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
@@ -1380,9 +1648,7 @@ export default function App() {
                         </div>
 
                         {loadingSavant ? (
-                          <div className="py-8 text-center text-xs text-slate-400">
-                            Loading {savantYear} Baseball Savant Statcast percentiles...
-                          </div>
+                          <BaseballLoader label={`Loading ${savantYear} Statcast percentiles`} compact />
                         ) : !savant?.available ? (
                           <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
                             <span>
@@ -1415,7 +1681,7 @@ export default function App() {
                                       </span>
                                       <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
                                         <div
-                                          className={`h-full rounded-full ${getPctBarColor(m.value)}`}
+                                          className={`h-full rounded-full animate-bar-grow ${getPctBarColor(m.value)}`}
                                           style={{ width: `${Math.max(4, m.value)}%` }}
                                         />
                                       </div>
@@ -1679,9 +1945,7 @@ export default function App() {
                         )}
                       </div>
                       {loadingSplits ? (
-                        <div className="p-10 text-center text-xs text-slate-400">
-                          Loading {splitsYear} situational splits...
-                        </div>
+                        <BaseballLoader label={`Loading ${splitsYear} situational splits`} compact />
                       ) : splitRows.length === 0 ? (
                         <div className="p-10 text-center text-xs text-slate-400">
                           No situational split data available for {playerStats.splits?.season || splitsYear}.
@@ -1962,7 +2226,7 @@ export default function App() {
               </div>
 
               {loading ? (
-                <div className="text-center py-16 text-slate-400 text-sm">Loading MLB transactions...</div>
+                <FeedSkeleton />
               ) : transactions.length === 0 ? (
                 <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3 bg-white dark:bg-slate-900">
                   <p className="font-bold text-base text-slate-700 dark:text-slate-200">
@@ -2117,8 +2381,8 @@ export default function App() {
                                       <div className="flex items-center gap-2 mb-2">
                                         <button
                                           onClick={() => openTeamHub(tInfo.abbr)}
-                                          className="px-2 py-0.5 rounded text-xs font-black text-white hover:opacity-85 transition"
-                                          style={{ backgroundColor: tInfo.color }}
+                                          className="px-2 py-0.5 rounded text-xs font-black hover:opacity-85 transition shadow-sm"
+                                          style={getTeamBadgeStyle(tInfo.color)}
                                           title={`Open ${tInfo.name} Team Hub`}
                                         >
                                           {tInfo.abbr}
@@ -2177,8 +2441,8 @@ export default function App() {
                                     <button
                                       type="button"
                                       onClick={() => openTeamHub(destTeam.abbr)}
-                                      className="px-2 py-0.5 rounded text-xs font-black text-white shrink-0 hover:opacity-85 transition"
-                                      style={{ backgroundColor: destTeam.color }}
+                                      className="px-2 py-0.5 rounded text-xs font-black shrink-0 hover:opacity-85 transition shadow-sm"
+                                      style={getTeamBadgeStyle(destTeam.color)}
                                       title={`View ${destTeam.name} Hub`}
                                     >
                                       {destTeam.abbr}
@@ -2292,8 +2556,8 @@ export default function App() {
                     >
                       <div className="flex items-center gap-2">
                         <span
-                          className="w-9 text-center py-0.5 rounded text-[11px] font-black text-white"
-                          style={{ backgroundColor: row.team.color }}
+                          className="w-9 text-center py-0.5 rounded text-[11px] font-black shadow-sm"
+                          style={getTeamBadgeStyle(row.team.color)}
                         >
                           {row.team.abbr}
                         </span>
@@ -2367,24 +2631,14 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
-                    {FA_CLASS_YEARS.map((yr) => (
-                      <button
-                        key={yr}
-                        onClick={() => {
-                          setSelectedFaClass(yr);
-                          setFaSignedFilter(yr === '2026' ? 'UNSIGNED' : 'ALL');
-                        }}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                          selectedFaClass === yr
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                      >
-                        {yr}
-                      </button>
-                    ))}
-                  </div>
+                  <YearPicker
+                    value={selectedFaClass}
+                    years={FA_CLASS_YEARS}
+                    onChange={(yr) => {
+                      setSelectedFaClass(yr);
+                      setFaSignedFilter(yr === '2026' ? 'UNSIGNED' : 'ALL');
+                    }}
+                  />
 
                   <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
                     {[
@@ -2470,9 +2724,10 @@ export default function App() {
             </div>
 
             {loadingFreeAgents ? (
-              <div className="text-center py-16 text-sm text-slate-400">
-                Fetching {selectedFaClass} MLB free agent class &amp; {faStatMode === 'career' ? 'career' : selectedFaClass} stats...
-              </div>
+              <CardsGridSkeleton
+                count={9}
+                label={`Scouting ${selectedFaClass} MLB free agents`}
+              />
             ) : filteredFreeAgents.length === 0 ? (
               <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
                 <p className="text-sm font-semibold text-slate-500">
@@ -2524,8 +2779,8 @@ export default function App() {
                                 e.stopPropagation();
                                 openTeamHub(prevTeam.abbr);
                               }}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-black text-white hover:opacity-85"
-                              style={{ backgroundColor: prevTeam.color }}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-black hover:opacity-85 shadow-sm"
+                              style={getTeamBadgeStyle(prevTeam.color)}
                               title="Previous club"
                             >
                               {prevTeam.abbr}
@@ -2541,8 +2796,8 @@ export default function App() {
                                       e.stopPropagation();
                                       openTeamHub(newTeamInfo.abbr);
                                     }}
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-black text-white hover:opacity-85"
-                                    style={{ backgroundColor: newTeamInfo.color }}
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-black hover:opacity-85 shadow-sm"
+                                    style={getTeamBadgeStyle(newTeamInfo.color)}
                                     title={`Signed with ${newTeamInfo.name}`}
                                   >
                                     {newTeamInfo.abbr}
@@ -2635,7 +2890,7 @@ export default function App() {
               </div>
 
               {loadingScores ? (
-                <div className="text-center py-10 text-sm text-slate-400">Loading MLB schedule...</div>
+                <CardsGridSkeleton count={6} label={`Loading MLB scoreboard for ${scoreDate}`} />
               ) : games.length === 0 ? (
                 <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-3">
                   <div className="space-y-1">
@@ -2707,8 +2962,8 @@ export default function App() {
                                 className="flex items-center gap-2.5 text-left hover:opacity-85"
                               >
                                 <span
-                                  className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
-                                  style={{ backgroundColor: info.color }}
+                                  className="w-10 text-center py-0.5 rounded text-xs font-black shadow-sm"
+                                  style={getTeamBadgeStyle(info.color)}
                                 >
                                   {info.abbr}
                                 </span>
@@ -2786,26 +3041,12 @@ export default function App() {
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                    {SEASON_YEARS.map((yr) => (
-                      <button
-                        key={yr}
-                        onClick={() => setStandingsSeason(yr)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                          standingsSeason === yr
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {yr}
-                      </button>
-                    ))}
-                  </div>
+                  <YearPicker value={standingsSeason} onChange={setStandingsSeason} />
                 </div>
               </div>
 
               {loadingStandings ? (
-                <div className="text-center py-12 text-sm text-slate-400">Loading {standingsSeason} MLB standings...</div>
+                <StandingsSkeleton label={`Loading ${standingsSeason} MLB standings`} />
               ) : (
                 <div className={`grid grid-cols-1 ${standingsView === 'wildCard' ? 'lg:grid-cols-2' : 'lg:grid-cols-2 xl:grid-cols-3'} gap-4`}>
                   {(standingsView === 'wildCard' ? standingsData.wildCard : standingsData.divisions).map((group, idx) => (
@@ -2835,7 +3076,8 @@ export default function App() {
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
                             {(group.teams || []).map((t, tIdx) => {
                               const tInfo = getTeamInfo(t.abbr);
-                              const isWcCutoff = standingsView === 'wildCard' && tIdx === 2;
+                              const wcCutoffIdx = getWcCutoffIndex(standingsSeason);
+                              const isWcCutoff = standingsView === 'wildCard' && wcCutoffIdx >= 0 && tIdx === wcCutoffIdx;
                               return (
                                 <tr
                                   key={t.abbr}
@@ -2846,8 +3088,8 @@ export default function App() {
                                 >
                                   <td className="py-2.5 pl-4 pr-2 font-bold flex items-center gap-2">
                                     <span
-                                      className="w-8 text-center py-0.5 rounded text-[10px] font-black text-white shrink-0"
-                                      style={{ backgroundColor: tInfo.color }}
+                                      className="w-8 text-center py-0.5 rounded text-[10px] font-black shrink-0 shadow-sm"
+                                      style={getTeamBadgeStyle(tInfo.color)}
                                     >
                                       {tInfo.abbr}
                                     </span>
@@ -2892,15 +3134,15 @@ export default function App() {
 
         {/* League Leaders Tab */}
         {activeTab === 'leaders' && (
-          <div className="space-y-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-4 animate-fade-up">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div>
                 <h2 className="text-xl font-extrabold flex items-center gap-2">
                   <Award className="w-5 h-5 text-amber-400" />
                   <span>MLB League Leaders ({leadersSeason})</span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Official MLB Stats API top-10 leaderboards • Click any player for full career stats
+                  Official MLB Stats API top-10 leaderboards (2000–2026) • Click any player for full career &amp; Statcast profile
                 </p>
               </div>
 
@@ -2924,102 +3166,112 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                  {SEASON_YEARS.map((yr) => (
-                    <button
-                      key={yr}
-                      onClick={() => setLeadersSeason(yr)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                        leadersSeason === yr
-                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                          : 'text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {yr}
-                    </button>
-                  ))}
-                </div>
+                <YearPicker value={leadersSeason} onChange={setLeadersSeason} />
               </div>
             </div>
 
             {loadingLeaders ? (
-              <div className="text-center py-16 text-sm text-slate-400">
-                Loading {leadersSeason} MLB {leadersGroup} leaders...
-              </div>
+              <LeadersSkeleton label={`Loading ${leadersSeason} MLB ${leadersGroup} leaders`} />
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {(leadersData[leadersGroup] || []).map((board) => {
-                  const topPlayer = board.leaders?.[0];
-                  const topTeam = topPlayer ? getTeamInfo(topPlayer.teamAbbr) : null;
-                  return (
-                    <div
-                      key={board.category}
-                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
-                    >
-                      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between">
-                        <h3 className="font-extrabold text-sm">
-                          {LEADER_LABELS[board.category] || board.category}
-                        </h3>
-                        <span className="text-[11px] font-bold text-slate-400">{leadersSeason}</span>
-                      </div>
+                {[...(leadersData[leadersGroup] || [])]
+                  .sort((a, b) => (LEADER_ORDER[a.category] || 99) - (LEADER_ORDER[b.category] || 99))
+                  .map((board) => {
+                    const list = board.leaders || [];
+                    const topPlayer = list[0];
+                    const topTeam = topPlayer ? getTeamInfo(topPlayer.teamAbbr) : null;
+                    const rankCounts = {};
+                    list.forEach((x) => {
+                      rankCounts[x.rank] = (rankCounts[x.rank] || 0) + 1;
+                    });
+                    const isTopTied = topPlayer && rankCounts[topPlayer.rank] > 1;
 
-                      {topPlayer && (
-                        <div
-                          onClick={() => openPlayerModal(topPlayer.playerId, topPlayer.fullName, topPlayer.teamAbbr)}
-                          className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-sky-500/5 hover:bg-sky-500/10 cursor-pointer transition"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <PlayerAvatar
-                              playerId={topPlayer.playerId}
-                              playerName={topPlayer.fullName}
-                              teamAbbr={topPlayer.teamAbbr}
-                            />
-                            <div className="min-w-0">
-                              <div className="text-[10px] font-black uppercase text-amber-500">#1 Leader</div>
-                              <div className="font-extrabold text-sm truncate">{topPlayer.fullName}</div>
-                              <span
-                                className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-black text-white"
-                                style={{ backgroundColor: topTeam.color }}
-                              >
-                                {topTeam.abbr}
-                              </span>
+                    return (
+                      <div
+                        key={board.category}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
+                      >
+                        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between">
+                          <h3 className="font-extrabold text-sm">
+                            {formatLeaderCategory(board.category)}
+                          </h3>
+                          <span className="text-[11px] font-bold text-slate-400 tabular-nums">{leadersSeason}</span>
+                        </div>
+
+                        {topPlayer && (
+                          <div
+                            onClick={() => openPlayerModal(topPlayer.playerId, topPlayer.fullName, topPlayer.teamAbbr)}
+                            className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-sky-500/5 hover:bg-sky-500/10 cursor-pointer transition"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <PlayerAvatar
+                                playerId={topPlayer.playerId}
+                                playerName={topPlayer.fullName}
+                                teamAbbr={topPlayer.teamAbbr}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-black uppercase tracking-wide text-amber-500">
+                                  {isTopTied ? 'T-#1 Leader' : '#1 Leader'}
+                                </div>
+                                <div className="font-extrabold text-sm truncate">{topPlayer.fullName}</div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openTeamHub(topTeam.abbr);
+                                  }}
+                                  className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm hover:opacity-85"
+                                  style={getTeamBadgeStyle(topTeam.color)}
+                                  title={`Open ${topTeam.name} Hub`}
+                                >
+                                  {topTeam.abbr}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-2xl font-black text-sky-500 shrink-0 tabular-nums">
+                              {topPlayer.value}
                             </div>
                           </div>
-                          <div className="text-2xl font-black text-sky-500 shrink-0">
-                            {topPlayer.value}
-                          </div>
-                        </div>
-                      )}
+                        )}
 
-                      <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
-                        {(board.leaders || []).slice(1, 10).map((item, idx) => {
-                          const tInfo = getTeamInfo(item.teamAbbr);
-                          return (
-                            <div
-                              key={`${item.playerId}-${idx}`}
-                              onClick={() => openPlayerModal(item.playerId, item.fullName, item.teamAbbr)}
-                              className="px-4 py-2 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="w-5 font-bold text-slate-400">{item.rank}.</span>
-                                <span className="font-bold truncate">{item.fullName}</span>
-                                <span
-                                  className="px-1.5 py-0.5 rounded text-[10px] font-black text-white shrink-0"
-                                  style={{ backgroundColor: tInfo.color }}
-                                >
-                                  {tInfo.abbr}
+                        <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                          {list.slice(1, 10).map((item, idx) => {
+                            const tInfo = getTeamInfo(item.teamAbbr);
+                            const isTied = rankCounts[item.rank] > 1;
+                            return (
+                              <div
+                                key={`${item.playerId}-${idx}`}
+                                onClick={() => openPlayerModal(item.playerId, item.fullName, item.teamAbbr)}
+                                className="px-4 py-2 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="w-7 font-bold text-slate-400 tabular-nums shrink-0">
+                                    {isTied ? `T-${item.rank}` : `${item.rank}.`}
+                                  </span>
+                                  <span className="font-bold truncate">{item.fullName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openTeamHub(tInfo.abbr);
+                                    }}
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-black shrink-0 shadow-sm hover:opacity-85"
+                                    style={getTeamBadgeStyle(tInfo.color)}
+                                    title={`Open ${tInfo.name} Hub`}
+                                  >
+                                    {tInfo.abbr}
+                                  </button>
+                                </div>
+                                <span className="font-extrabold text-slate-700 dark:text-slate-200 ml-2 tabular-nums">
+                                  {item.value}
                                 </span>
                               </div>
-                              <span className="font-extrabold text-slate-700 dark:text-slate-200 ml-2">
-                                {item.value}
-                              </span>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -3231,7 +3483,7 @@ export default function App() {
                     </div>
 
                     {loadingHubRoster ? (
-                      <div className="text-center py-8 text-xs text-slate-400">Loading {info.short} live roster...</div>
+                      <BaseballLoader label={`Loading ${info.short} active roster & IL`} compact />
                     ) : !hubRoster ? (
                       <div className="text-center py-8 text-xs text-slate-400">Roster data unavailable right now.</div>
                     ) : hubRosterView === 'il' ? (
@@ -3550,8 +3802,8 @@ export default function App() {
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <span className="w-6 text-xs font-black text-slate-400 shrink-0">#{idx + 1}</span>
                                 <span
-                                  className="w-10 text-center py-0.5 rounded text-xs font-black text-white shrink-0"
-                                  style={{ backgroundColor: row.team.color }}
+                                  className="w-10 text-center py-0.5 rounded text-xs font-black shrink-0 shadow-sm"
+                                  style={getTeamBadgeStyle(row.team.color)}
                                 >
                                   {row.team.abbr}
                                 </span>
@@ -3636,9 +3888,7 @@ export default function App() {
 
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                     {loadingSpending ? (
-                      <div className="text-center py-12 text-xs text-slate-400">
-                        Loading {spendingCycle} MLB offseason activity...
-                      </div>
+                      <BaseballLoader label={`Crunching ${spendingCycle} MLB offseason moves`} compact />
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
                         {activeOffseasonRows.map((row, idx) => {
@@ -3653,8 +3903,8 @@ export default function App() {
                                 <div className="flex items-center gap-3">
                                   <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
                                   <span
-                                    className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
-                                    style={{ backgroundColor: row.team.color }}
+                                    className="w-10 text-center py-0.5 rounded text-xs font-black shadow-sm"
+                                    style={getTeamBadgeStyle(row.team.color)}
                                   >
                                     {row.team.abbr}
                                   </span>
@@ -3748,13 +3998,61 @@ export default function App() {
 
             <div className="max-h-96 overflow-y-auto p-2">
               {globalPlayerQuery.trim().length < 2 ? (
-                <div className="py-10 text-center text-xs text-slate-400">
-                  Type at least 2 letters to search active and historical MLB players.
-                </div>
+                recentPlayers.length > 0 ? (
+                  <div className="p-2 space-y-2">
+                    <div className="px-2 flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                      <span className="inline-flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-sky-500" /> Recent Players
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecentPlayers([]);
+                          try { localStorage.removeItem('hst_recent_players'); } catch {}
+                        }}
+                        className="text-[10px] font-bold text-slate-400 hover:text-rose-400"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-1">
+                      {recentPlayers.map((rp) => {
+                        const rpTeam = getTeamInfo(rp.teamAbbr);
+                        return (
+                          <button
+                            key={rp.id}
+                            type="button"
+                            onClick={() => {
+                              setPlayerSearchOpen(false);
+                              openPlayerModal(rp.id, rp.fullName, rp.teamAbbr);
+                            }}
+                            className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left transition"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={rp.teamAbbr} size="sm" />
+                              <div className="min-w-0">
+                                <div className="text-xs sm:text-sm font-bold truncate">{rp.fullName}</div>
+                                <div className="text-[11px] text-slate-500">{rp.position}</div>
+                              </div>
+                            </div>
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm shrink-0"
+                              style={getTeamBadgeStyle(rpTeam.color)}
+                            >
+                              {rpTeam.abbr}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-10 text-center text-xs text-slate-400">
+                    Type at least 2 letters to search active and historical MLB players (press <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">/</kbd> anytime).
+                  </div>
+                )
               ) : searchingPlayers ? (
-                <div className="py-10 text-center text-xs text-slate-400">
-                  Searching MLB Stats API...
-                </div>
+                <BaseballLoader label="Searching MLB players" compact />
               ) : globalPlayerResults.length === 0 ? (
                 <div className="py-10 text-center text-xs text-slate-400">
                   No MLB players found matching &ldquo;{globalPlayerQuery}&rdquo;.
@@ -3790,8 +4088,8 @@ export default function App() {
                             <div className="text-xs text-slate-500 flex items-center gap-1.5">
                               {tInfo ? (
                                 <span
-                                  className="px-1.5 py-0.5 rounded text-[10px] font-black text-white"
-                                  style={{ backgroundColor: tInfo.color }}
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm"
+                                  style={getTeamBadgeStyle(tInfo.color)}
                                 >
                                   {tInfo.abbr}
                                 </span>
@@ -3881,9 +4179,7 @@ export default function App() {
 
             <div className="p-5 space-y-5">
               {loadingBoxScore ? (
-                <div className="py-12 text-center text-sm text-slate-400">
-                  Fetching live MLB box score, scoring plays &amp; official video highlights...
-                </div>
+                <BaseballLoader label="Loading box score, scoring plays & official highlights" />
               ) : !boxScore ? (
                 <div className="py-12 text-center text-sm text-slate-400">
                   Box score data is not available for this game yet.
@@ -3915,8 +4211,8 @@ export default function App() {
                               className="flex items-center gap-2.5 hover:opacity-85"
                             >
                               <span
-                                className="w-11 text-center py-0.5 rounded text-xs font-black text-white"
-                                style={{ backgroundColor: row.info.color }}
+                                className="w-11 text-center py-0.5 rounded text-xs font-black shadow-sm"
+                                style={getTeamBadgeStyle(row.info.color)}
                               >
                                 {row.info.abbr}
                               </span>
@@ -4400,6 +4696,18 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {showBackToTop && (
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          aria-label="Back to top"
+          title="Back to top"
+          className="fixed bottom-20 lg:bottom-6 right-5 z-40 p-3 rounded-full bg-sky-600 hover:bg-sky-500 text-white shadow-xl shadow-sky-600/25 transition hover:-translate-y-0.5 animate-fade-up"
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
       )}
     </div>
   );
