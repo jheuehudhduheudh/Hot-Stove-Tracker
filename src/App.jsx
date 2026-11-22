@@ -221,6 +221,36 @@ const MOVE_TYPE_LABELS = {
   DFA_WAIVER: 'DFAs & Waivers',
 };
 
+function parseStatLineCells(statLine) {
+  if (!statLine || typeof statLine !== 'string') return [];
+  const parts = statLine
+    .split('•')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return [];
+  const cells = [];
+  for (const part of parts.slice(0, 3)) {
+    const openIdx = part.indexOf('(');
+    const closeIdx = part.endsWith(')') ? part.length - 1 : -1;
+    if (openIdx > 0 && closeIdx > openIdx) {
+      const mainPart = part.slice(0, openIdx).trim();
+      const extraPart = part.slice(openIdx + 1, closeIdx).trim();
+      const mMain = mainPart.match(/^([.\d+-]+)\s+([A-Za-z+%/]+)$/);
+      if (mMain) {
+        cells.push({ val: mMain[1], lbl: `${mMain[2]} · ${extraPart}` });
+        continue;
+      }
+    }
+    const mSimple = part.match(/^([.\d+-]+)\s+([A-Za-z+%/]+)$/);
+    if (mSimple) {
+      cells.push({ val: mSimple[1], lbl: mSimple[2] });
+      continue;
+    }
+    cells.push({ val: part, lbl: 'STAT' });
+  }
+  return cells;
+}
+
 function BrandLogo({ className = 'w-9 h-9' }) {
   return (
     <svg viewBox="0 0 120 120" fill="none" className={`${className} shrink-0 drop-shadow`}>
@@ -283,7 +313,7 @@ function FeedSkeleton() {
       {[0, 1, 2, 3, 4].map((i) => (
         <div
           key={i}
-          className="p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3"
+          className="p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -313,7 +343,7 @@ function CardsGridSkeleton({ count = 6, label = '' }) {
         {Array.from({ length: count }).map((_, i) => (
           <div
             key={i}
-            className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3"
+            className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3"
           >
             <div className="w-12 h-12 rounded-full hst-shimmer shrink-0" />
             <div className="flex-1 space-y-2">
@@ -336,7 +366,7 @@ function LeadersSkeleton({ label = 'Loading MLB leaders...' }) {
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
-            className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
+            className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
           >
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
               <div className="h-4 w-32 rounded hst-shimmer" />
@@ -375,7 +405,7 @@ function StandingsSkeleton({ label = 'Loading MLB standings...' }) {
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
-            className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
+            className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden"
           >
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
               <div className="h-4 w-24 rounded hst-shimmer" />
@@ -448,15 +478,15 @@ function SlidingSegmented({
 
   const styles = {
     nav: {
-      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/85 p-1 rounded-xl border border-slate-200/70 dark:border-slate-700/50',
-      pill: 'bg-white dark:bg-slate-900 rounded-lg shadow-sm ring-1 ring-slate-200/70 dark:ring-slate-700/80',
-      activeText: 'text-sky-600 dark:text-sky-400',
-      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
-      btn: 'px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold whitespace-nowrap tabular-nums',
-      insetY: 'top-1 bottom-1',
+      wrap: 'relative inline-flex items-center gap-1 h-full',
+      pill: 'bg-red-600 dark:bg-red-500 rounded-t-sm',
+      activeText: 'text-slate-950 dark:text-white',
+      idleText: 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200',
+      btn: 'px-2.5 xl:px-3 py-2 text-xs xl:text-[13px] font-semibold whitespace-nowrap tabular-nums',
+      insetY: 'bottom-0 h-[2px]',
     },
     surface: {
-      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl max-w-full overflow-x-auto no-scrollbar',
+      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-lg max-w-full overflow-x-auto no-scrollbar',
       pill: 'bg-white dark:bg-slate-900 rounded-lg shadow-sm ring-1 ring-slate-200/60 dark:ring-slate-700/70',
       activeText: 'text-sky-600 dark:text-sky-400',
       idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
@@ -480,12 +510,20 @@ function SlidingSegmented({
       insetY: 'top-1 bottom-1',
     },
     card: {
-      wrap: 'relative inline-flex items-center gap-1 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-full overflow-x-auto no-scrollbar',
-      pill: 'bg-sky-600 rounded-xl shadow-sm shadow-sky-600/25',
+      wrap: 'relative inline-flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800 max-w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-sky-600 rounded-lg shadow-sm shadow-sky-600/25',
       activeText: 'text-white',
       idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
-      btn: 'px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap',
-      insetY: 'top-1.5 bottom-1.5',
+      btn: 'px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap',
+      insetY: 'top-1 bottom-1',
+    },
+    underline: {
+      wrap: 'relative flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-sky-500 rounded-t-full',
+      activeText: 'text-sky-600 dark:text-sky-400',
+      idleText: 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200',
+      btn: 'px-3 py-2 text-xs font-bold whitespace-nowrap',
+      insetY: 'bottom-0 h-[2px]',
     },
   };
 
@@ -549,7 +587,7 @@ function YearPicker({ value, onChange, years = ALL_SEASON_YEARS, quickYears = QU
   const isCustomYear = !quickYears.includes(String(value));
 
   return (
-    <div ref={wrapRef} className="relative flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+    <div ref={wrapRef} className="relative flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-lg">
       {quickYears.map((yr) => (
         <button
           key={yr}
@@ -581,7 +619,7 @@ function YearPicker({ value, onChange, years = ALL_SEASON_YEARS, quickYears = QU
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 animate-pop-in">
+        <div className="absolute right-0 top-full mt-2 w-56 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 animate-pop-in">
           <div className="px-1.5 pb-2 mb-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
             <span>Select Season</span>
             <span className="tabular-nums">{years[years.length - 1]}–{years[0]}</span>
@@ -656,7 +694,7 @@ function TeamDropdown({ value, onChange }) {
           setOpen((o) => !o);
           setQuery('');
         }}
-        className={`inline-flex items-center justify-between gap-3 min-w-[235px] px-3 py-2 rounded-xl text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition ${
+        className={`inline-flex items-center justify-between gap-3 min-w-[235px] px-3 py-2 rounded-lg text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition ${
           open
             ? 'border-sky-500 ring-2 ring-sky-500/20'
             : 'border-slate-200 dark:border-slate-800 hover:border-sky-500/60'
@@ -672,7 +710,7 @@ function TeamDropdown({ value, onChange }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-hidden animate-pop-in">
+        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-hidden animate-pop-in">
           <div className="p-2.5 border-b border-slate-100 dark:border-slate-800">
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -682,7 +720,7 @@ function TeamDropdown({ value, onChange }) {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter by club, city, or division..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
               />
             </div>
           </div>
@@ -707,7 +745,7 @@ function TeamDropdown({ value, onChange }) {
                             onChange(t.abbr);
                             setOpen(false);
                           }}
-                          className={`w-full px-2 py-1.5 rounded-xl flex items-center justify-between gap-2 text-left transition ${
+                          className={`w-full px-2 py-1.5 rounded-lg flex items-center justify-between gap-2 text-left transition ${
                             active
                               ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
                               : 'hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-200'
@@ -788,7 +826,7 @@ function DatePickerPopover({ value, onChange }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition tabular-nums ${
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition tabular-nums ${
           open
             ? 'border-sky-500 ring-2 ring-sky-500/20 text-sky-600 dark:text-sky-400'
             : 'border-slate-200 dark:border-slate-800 hover:border-sky-500'
@@ -800,7 +838,7 @@ function DatePickerPopover({ value, onChange }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-72 p-3 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 space-y-3 animate-pop-in">
+        <div className="absolute right-0 top-full mt-2 w-72 p-3 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 space-y-3 animate-pop-in">
           <div className="flex items-center justify-between">
             <button
               type="button"
@@ -1957,9 +1995,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen pb-20 md:pb-12 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+    <div className="min-h-screen pb-20 md:pb-12 bg-[#f4f4f2] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 shrink-0">
             <BrandLogo className="w-9 h-9" />
             <div>
@@ -1967,16 +2005,7 @@ export default function App() {
                 <h1 className="font-extrabold tracking-tight text-base sm:text-lg">
                   HOT STOVE TRACKER
                 </h1>
-                <span
-                  className={`hidden 2xl:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                    isSupabaseConfigured
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                      : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-                  }`}
-                >
-                  <Database className="w-3 h-3" />
-                  {isSupabaseConfigured ? 'Auto-Sync Live' : 'Demo Mode'}
-                </span>
+
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
                 Year-Round MLB Dashboard • Synced: {formatMinutesAgo(lastSyncedAt)}
@@ -1987,7 +2016,7 @@ export default function App() {
           <SlidingSegmented
             asNav
             variant="nav"
-            className="hidden lg:inline-flex"
+            className="hidden lg:inline-flex h-14"
             value={activeTab}
             hiddenIndicator={Boolean(selectedPlayer || compareOpen)}
             onChange={switchMainTab}
@@ -2004,7 +2033,7 @@ export default function App() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => openCompareView(null)}
-              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold border transition ${
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
                 compareOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
@@ -2021,7 +2050,7 @@ export default function App() {
                 setGlobalPlayerQuery('');
                 setGlobalPlayerResults([]);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
               title="Search any MLB player"
             >
               <Search className="w-3.5 h-3.5 text-sky-500" />
@@ -2032,7 +2061,7 @@ export default function App() {
             <button
               onClick={() => handleSyncNow(true)}
               disabled={syncing}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
@@ -2041,7 +2070,7 @@ export default function App() {
             <button
               onClick={() => setDarkMode(!darkMode)}
               aria-label="Toggle Light/Dark Mode"
-              className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
             >
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
@@ -2049,6 +2078,71 @@ export default function App() {
 
           </div>
         </div>
+
+        {/* Sleek Live Wire / Scoreboard Strip */}
+        {(games.length > 0 || transactions.length > 0) && (
+          <div className="border-t border-slate-200/70 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-950/80">
+            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-8 flex items-center gap-3 overflow-x-auto no-scrollbar text-[11px]">
+              <span className="inline-flex items-center gap-1.5 font-stat font-bold uppercase tracking-wider text-[10px] text-sky-600 dark:text-sky-400 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {games.length > 0 ? 'MLB Scoreboard' : 'Latest Wire'}
+              </span>
+              <span className="h-3.5 w-px bg-slate-300 dark:bg-slate-800 shrink-0" />
+              <div className="flex items-center gap-2 min-w-0">
+                {games.length > 0
+                  ? games.slice(0, 8).map((g) => {
+                      const aw = getTeamInfo(g.away?.abbr);
+                      const hm = getTeamInfo(g.home?.abbr);
+                      return (
+                        <button
+                          key={g.gamePk}
+                          type="button"
+                          onClick={() => openBoxScore(g.gamePk)}
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 hover:border-sky-500/50 transition shrink-0 font-stat"
+                        >
+                          <TeamLogo abbr={aw.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                          <span className="font-bold">{aw.abbr}</span>
+                          <span className="text-slate-500">{g.away?.runs ?? ''}</span>
+                          <span className="text-slate-400">@</span>
+                          <TeamLogo abbr={hm.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                          <span className="font-bold">{hm.abbr}</span>
+                          <span className="text-slate-500">{g.home?.runs ?? ''}</span>
+                          <span className="text-[9px] text-slate-400 uppercase">{g.status}</span>
+                        </button>
+                      );
+                    })
+                  : transactions.slice(0, 6).map((tx) => {
+                      const club = getTeamInfo(tx.to_team || tx.from_team);
+                      return (
+                        <button
+                          key={tx.id}
+                          type="button"
+                          onClick={() =>
+                            tx.player_id
+                              ? openPlayerModal(tx.player_id, tx.player_name, club.abbr)
+                              : openTeamHub(club.abbr)
+                          }
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 hover:border-sky-500/50 transition shrink-0"
+                        >
+                          <TeamLogo abbr={club.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                          <span className="font-stat font-bold text-[10px] text-slate-500 dark:text-slate-400">
+                            {club.abbr}
+                          </span>
+                          <span className="font-semibold truncate max-w-[220px]">
+                            {tx.player_name || decodeHtml(tx.headline)}
+                          </span>
+                          {tx.total_value_millions > 0 && (
+                            <span className="font-stat font-bold text-[10px] text-emerald-500">
+                              ${tx.total_value_millions}M
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       {syncNotice && (
@@ -2189,7 +2283,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setCompareOpen(false)}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
                   >
                     <ArrowLeft className="w-4 h-4 text-sky-500" />
                     <span>Back</span>
@@ -2207,7 +2301,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setComparePlayers([pB, pA])}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
                     >
                       <ArrowLeftRight className="w-3.5 h-3.5 text-sky-500" />
                       <span>Swap</span>
@@ -2216,7 +2310,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={copyShareUrl}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
                     <span>{copiedLink ? 'Copied!' : 'Share'}</span>
@@ -2235,7 +2329,7 @@ export default function App() {
                   return (
                     <div
                       key={slotIdx}
-                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
+                      className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
                     >
                       {isBusy ? (
                         <BaseballLoader label={`Loading Player ${slotIdx === 0 ? 'A' : 'B'}`} compact />
@@ -2266,7 +2360,7 @@ export default function App() {
                                 setCompareSearchQuery(e.target.value);
                               }}
                               placeholder="Search any MLB player (e.g., Aaron Judge, Tarik Skubal)..."
-                              className="w-full pl-9 pr-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                              className="w-full pl-9 pr-3 py-2 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                             />
                           </div>
 
@@ -2289,7 +2383,7 @@ export default function App() {
                                           setCompareSearchResults([]);
                                           loadComparePlayer(slotIdx, rp.id);
                                         }}
-                                        className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
+                                        className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
                                       >
                                         <span className="flex items-center gap-2.5 min-w-0">
                                           <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={rp.teamAbbr} size="sm" />
@@ -2328,7 +2422,7 @@ export default function App() {
                                       setCompareSearchResults([]);
                                       loadComparePlayer(slotIdx, resP.id);
                                     }}
-                                    className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
+                                    className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2 text-left transition"
                                   >
                                     <span className="flex items-center gap-2.5 min-w-0">
                                       <PlayerAvatar playerId={resP.id} playerName={resP.fullName} teamAbbr={resP.teamAbbr || 'MLB'} size="sm" />
@@ -2409,7 +2503,7 @@ export default function App() {
                                 setCompareSearchQuery('');
                                 setCompareSearchResults([]);
                               }}
-                              className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-black/35 hover:bg-black/55 backdrop-blur shrink-0 transition"
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-black/35 hover:bg-black/55 backdrop-blur shrink-0 transition"
                             >
                               Change
                             </button>
@@ -2424,7 +2518,7 @@ export default function App() {
               {pA && pB && (
                 <>
                   {/* Comparison Controls Bar */}
-                  <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                  <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <SlidingSegmented
                         variant="surface"
@@ -2459,13 +2553,13 @@ export default function App() {
                   </div>
 
                   {mismatchNotice && (
-                    <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-300">
+                    <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-300">
                       Comparing a position player ({pA.isPitcher ? pB.fullName : pA.fullName}) against a pitcher ({pA.isPitcher ? pA.fullName : pB.fullName}) — switch between Hitting and Pitching above to inspect each side.
                     </div>
                   )}
 
                   {/* Head-to-Head Stats Table */}
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                     <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
                         Head-to-Head {isPitchCmp ? 'Pitching' : 'Batting'} Comparison ({statAObj.label} vs {statBObj.label})
@@ -2544,7 +2638,7 @@ export default function App() {
                   </div>
 
                   {/* Head-to-Head Baseball Savant Statcast Percentiles */}
-                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
+                  <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <h3 className="font-extrabold text-base flex items-center gap-2">
@@ -2567,7 +2661,7 @@ export default function App() {
                     </div>
 
                     {savantKeys.length === 0 ? (
-                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
+                      <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
                         No Baseball Savant Statcast percentiles published for these players in {compareSavantYear}. Try another year (2015+) above.
                       </div>
                     ) : (
@@ -2656,7 +2750,7 @@ export default function App() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   onClick={() => setSelectedPlayer(null)}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500 transition"
                 >
                   <ArrowLeft className="w-4 h-4 text-sky-500" />
                   <span>Back to Tracker</span>
@@ -2666,7 +2760,7 @@ export default function App() {
                   {playerStats?.id && (
                     <button
                       onClick={() => openCompareView(playerStats)}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm transition"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm transition"
                       title="Compare this player side-by-side with another MLB player"
                     >
                       <Scale className="w-3.5 h-3.5" />
@@ -2675,14 +2769,14 @@ export default function App() {
                   )}
                   <button
                     onClick={copyShareUrl}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-500 transition"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-500 transition"
                     title="Copy direct link to this player profile"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
                     <span>{copiedLink ? 'Copied!' : 'Share'}</span>
                   </button>
                   {playerStats?.isTwoWay && (
-                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                       {[
                         { id: 'hitting', label: 'Hitting' },
                         { id: 'pitching', label: 'Pitching' },
@@ -2708,7 +2802,7 @@ export default function App() {
                   {playerStats?.id && (
                     <button
                       onClick={(e) => toggleWatchlist(playerStats.id, playerStats.fullName, e)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition ${
                         watchlistIds.includes(playerStats.id)
                           ? 'bg-amber-500/15 border-amber-500/40 text-amber-500'
                           : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-amber-400'
@@ -2723,7 +2817,7 @@ export default function App() {
 
               {/* Hero Player Bio Banner */}
               <div
-                className="relative overflow-hidden p-6 rounded-2xl text-white shadow-xl border border-white/10"
+                className="relative overflow-hidden p-6 rounded-lg text-white shadow-xl border border-white/10"
                 style={{ background: `linear-gradient(135deg, ${teamInfo.color} 0%, #0f172a 130%)` }}
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-black/40 via-black/20 to-transparent" />
@@ -2736,7 +2830,7 @@ export default function App() {
                 )}
                 <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-5">
                   <div className="flex items-center gap-4">
-                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center font-black text-2xl text-white/90">
+                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center font-black text-2xl text-white/90">
                       {!heroImgError ? (
                         <img
                           src={`https://midfield.mlbstatic.com/v1/people/${selectedPlayer.playerId}/spots/180`}
@@ -2805,7 +2899,7 @@ export default function App() {
                         href={playerStats.links.mlb}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
                       >
                         MLB.com <ExternalLink className="w-3 h-3" />
                       </a>
@@ -2813,7 +2907,7 @@ export default function App() {
                         href={playerStats.links.savant}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
                       >
                         Baseball Savant <ExternalLink className="w-3 h-3" />
                       </a>
@@ -2821,7 +2915,7 @@ export default function App() {
                         href={playerStats.links.bref}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur"
                       >
                         Baseball-Ref <ExternalLink className="w-3 h-3" />
                       </a>
@@ -2831,11 +2925,11 @@ export default function App() {
               </div>
 
               {loadingPlayerStats ? (
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
                   <BaseballLoader label="Loading career stats, splits & Baseball Savant profile" />
                 </div>
               ) : !playerStats ? (
-                <div className="p-12 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
+                <div className="p-12 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-center text-sm text-slate-400">
                   Unable to load profile for this player right now.
                 </div>
               ) : (
@@ -2879,7 +2973,7 @@ export default function App() {
                           ).map((card, i) => (
                             <div
                               key={i}
-                              className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                              className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
                             >
                               <div className="text-[11px] font-bold text-slate-400 uppercase">{card.label}</div>
                               <div className={`text-xl font-black mt-0.5 ${card.accent ? 'text-sky-500' : ''}`}>
@@ -2919,7 +3013,7 @@ export default function App() {
                       )}
 
                       {/* Baseball Savant Statcast Section (Conditional + Graceful Fallback) */}
-                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+                      <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <h3 className="font-extrabold text-base flex items-center gap-2">
@@ -2932,7 +3026,7 @@ export default function App() {
                           </div>
 
                           {savantYears.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                            <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                               {savantYears.map((yr) => (
                                 <button
                                   key={yr}
@@ -2953,7 +3047,7 @@ export default function App() {
                         {loadingSavant ? (
                           <BaseballLoader label={`Loading ${savantYear} Statcast percentiles`} compact />
                         ) : !savant?.available ? (
-                          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+                          <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
                             <span>
                               {savant?.reason || `No Baseball Savant Statcast percentiles published for ${savantYear} (requires Statcast era 2015+ and minimum PA/IP).`}
                             </span>
@@ -3007,7 +3101,7 @@ export default function App() {
                                 </div>
                                 <div className="grid grid-cols-2 gap-2.5">
                                   {savant.expected.xera && (
-                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                                       <div className="text-[11px] font-bold text-slate-400">ERA vs xERA</div>
                                       <div className="text-base font-black mt-0.5">
                                         {savant.expected.era || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
@@ -3016,7 +3110,7 @@ export default function App() {
                                     </div>
                                   )}
                                   {savant.expected.xba && (
-                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                                       <div className="text-[11px] font-bold text-slate-400">BA vs xBA</div>
                                       <div className="text-base font-black mt-0.5">
                                         {savant.expected.ba || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
@@ -3025,7 +3119,7 @@ export default function App() {
                                     </div>
                                   )}
                                   {savant.expected.xslg && (
-                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                                       <div className="text-[11px] font-bold text-slate-400">SLG vs xSLG</div>
                                       <div className="text-base font-black mt-0.5">
                                         {savant.expected.slg || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
@@ -3034,7 +3128,7 @@ export default function App() {
                                     </div>
                                   )}
                                   {savant.expected.xwoba && (
-                                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                    <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                                       <div className="text-[11px] font-bold text-slate-400">wOBA vs xwOBA</div>
                                       <div className="text-base font-black mt-0.5">
                                         {savant.expected.woba || '—'} <span className="text-slate-400 text-xs">vs</span>{' '}
@@ -3060,7 +3154,7 @@ export default function App() {
                   {(profileSubTab === 'seasons' || profileSubTab === 'postseason') && (() => {
                     const activeSet = profileSubTab === 'postseason' ? postBlock : regBlock;
                     return (
-                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                         <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
                           <h3 className="font-extrabold text-sm">
                             {profileSubTab === 'postseason' ? 'MLB Postseason' : 'MLB Regular Season'} {isPitchView ? 'Pitching' : 'Batting'} Stats
@@ -3216,7 +3310,7 @@ export default function App() {
 
                   {/* SUB-TAB 4: Situational Splits */}
                   {profileSubTab === 'splits' && (
-                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                       <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <h3 className="font-extrabold text-sm">
@@ -3230,7 +3324,7 @@ export default function App() {
                         </div>
 
                         {splitSeasonOptions.length > 1 && (
-                          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                             {splitSeasonOptions.map((yr) => (
                               <button
                                 key={yr}
@@ -3345,7 +3439,7 @@ export default function App() {
         {activeTab === 'feed' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-8 xl:col-span-9 space-y-4">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 shadow-sm">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 shadow-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="relative flex-1 min-w-[200px]">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -3354,7 +3448,7 @@ export default function App() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search player, team, or contract..."
-                      className="w-full pl-9 pr-8 py-2 rounded-xl text-sm border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="w-full pl-9 pr-8 py-2 rounded-lg text-sm border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                     {searchQuery && (
                       <button
@@ -3370,7 +3464,7 @@ export default function App() {
 
                   <button
                     onClick={toggleMyTeamsQuickFilter}
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold border transition ${
                       myTeamsOnlyActive && savedMyTeams.length > 0
                         ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-300'
                         : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 hover:border-amber-500/50'
@@ -3385,7 +3479,7 @@ export default function App() {
                   <div className="relative hidden md:block">
                     <button
                       onClick={() => setTeamMenuOpen(!teamMenuOpen)}
-                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     >
                       <Filter className="w-4 h-4 text-sky-500" />
                       <span>
@@ -3396,7 +3490,7 @@ export default function App() {
                     </button>
 
                     {teamMenuOpen && (
-                      <div className="absolute right-0 mt-2 w-[420px] p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl z-40">
+                      <div className="absolute right-0 mt-2 w-[420px] p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl z-40">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                             Division Presets
@@ -3454,7 +3548,7 @@ export default function App() {
 
                   <button
                     onClick={() => setMobileFilterOpen(true)}
-                    className="md:hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                    className="md:hidden inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
                   >
                     <Filter className="w-4 h-4 text-sky-500" />
                     <span>
@@ -3462,7 +3556,7 @@ export default function App() {
                     </span>
                   </button>
 
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 cursor-pointer select-none">
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={majorLeagueOnly}
@@ -3476,34 +3570,23 @@ export default function App() {
                     <button
                       onClick={() => exportData('csv')}
                       title="Export CSV"
-                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     >
                       <Download className="w-3.5 h-3.5" /> CSV
                     </button>
                     <button
                       onClick={() => exportData('json')}
                       title="Export JSON"
-                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                      className="inline-flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     >
                       JSON
                     </button>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="pt-1">
                   <SlidingSegmented
-                    variant="contrast"
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    options={[
-                      { id: 'ALL', label: 'All Status' },
-                      { id: 'REPORTED', label: 'Reported' },
-                      { id: 'OFFICIAL', label: 'Official' },
-                    ]}
-                  />
-
-                  <SlidingSegmented
-                    variant="sky"
+                    variant="underline"
                     value={typeFilter}
                     onChange={setTypeFilter}
                     options={[
@@ -3604,21 +3687,21 @@ export default function App() {
               {loading ? (
                 <FeedSkeleton />
               ) : transactions.length === 0 ? (
-                <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3 bg-white dark:bg-slate-900">
+                <div className="text-center py-16 px-4 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 space-y-3 bg-white dark:bg-slate-900">
                   <p className="font-bold text-base text-slate-700 dark:text-slate-200">
                     No MLB transactions in your database yet
                   </p>
                   <button
                     onClick={() => handleSyncNow(true)}
                     disabled={syncing}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white shadow"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white shadow"
                   >
                     <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
                     <span>{syncing ? 'Syncing Live MLB Data...' : 'Pull Live MLB Moves Now'}</span>
                   </button>
                 </div>
               ) : filteredTransactions.length === 0 ? (
-                <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="text-center py-16 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900">
                   <p className="font-semibold text-slate-500">No transactions match your current filters.</p>
                   <button
                     onClick={() => {
@@ -3669,7 +3752,7 @@ export default function App() {
                     return (
                       <article
                         key={tx.id}
-                        className="relative overflow-hidden p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
+                        className="relative overflow-hidden p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
                       >
                         <div
                           className="absolute left-0 top-0 bottom-0 w-1"
@@ -3765,7 +3848,7 @@ export default function App() {
                                   return (
                                     <div
                                       key={idx}
-                                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60"
+                                      className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60"
                                     >
                                       <div className="flex items-center gap-2 mb-2">
                                         <button
@@ -3874,7 +3957,7 @@ export default function App() {
 
                               {(tx.contract_years || tx.total_value_millions > 0) && (
                                 <div className="flex sm:flex-col items-end justify-end gap-1 shrink-0">
-                                  <span className="px-3 py-1 rounded-xl text-xs sm:text-sm font-extrabold bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                                  <span className="px-3 py-1 rounded-lg text-xs sm:text-sm font-extrabold bg-sky-500/15 text-sky-700 dark:text-sky-300">
                                     {tx.contract_years ? `${tx.contract_years} yr${tx.contract_years > 1 ? 's' : ''}` : ''}
                                     {tx.contract_years && tx.total_value_millions ? ' / ' : ''}
                                     {tx.total_value_millions ? `$${tx.total_value_millions}M` : ''}
@@ -3900,34 +3983,34 @@ export default function App() {
             </div>
 
             <aside className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-4 sticky top-20">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
                 <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">
                   <Activity className="w-4 h-4 text-sky-500" />
                   <span>Hot Stove Pulse</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                     <div className="text-xl font-black text-sky-500">{transactions.length}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">MLB Moves</div>
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                     <div className="text-xl font-black text-emerald-500">
                       ${leagueStats.totalSpent.toFixed(1)}M
                     </div>
                     <div className="text-[11px] text-slate-500 font-semibold">Tracked Deals</div>
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                     <div className="text-xl font-black">{leagueStats.totalSignings}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">Signings</div>
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                     <div className="text-xl font-black">{leagueStats.totalTrades}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">Trades</div>
                   </div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
                     Most Active Clubs
@@ -3944,14 +4027,11 @@ export default function App() {
                     <button
                       key={row.team.abbr}
                       onClick={() => openTeamHub(row.team.abbr)}
-                      className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/70 transition text-left"
+                      className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/70 transition text-left"
                     >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-9 text-center py-0.5 rounded text-[11px] font-black shadow-sm"
-                          style={getTeamBadgeStyle(row.team.color)}
-                        >
-                          {row.team.abbr}
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-6 h-6 rounded-md bg-slate-900 border border-white/10 flex items-center justify-center p-0.5 shrink-0">
+                          <TeamLogo abbr={row.team.abbr} size="xs" />
                         </span>
                         <span className="text-xs font-bold">{row.team.short}</span>
                       </div>
@@ -3965,7 +4045,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
                     Top Unsigned Free Agents
@@ -3988,7 +4068,7 @@ export default function App() {
                         key={fa.playerId}
                         type="button"
                         onClick={() => openPlayerModal(fa.playerId, fa.fullName, fa.lastTeam)}
-                        className="w-full flex items-center gap-2.5 p-1.5 -mx-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/70 text-left transition"
+                        className="w-full flex items-center gap-2.5 p-1.5 -mx-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/70 text-left transition"
                       >
                         <PlayerAvatar
                           playerId={fa.playerId}
@@ -4013,7 +4093,7 @@ export default function App() {
 
         {activeTab === 'freeAgents' && (
           <div className="space-y-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+            <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-extrabold">{selectedFaClass} MLB Free Agent Class</h2>
@@ -4054,7 +4134,7 @@ export default function App() {
                       value={faSearch}
                       onChange={(e) => setFaSearch(e.target.value)}
                       placeholder="Search free agents by name or team..."
-                      className="w-full pl-8 pr-8 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      className="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                     {faSearch && (
                       <button
@@ -4069,7 +4149,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => setWatchlistOnly((w) => !w)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                       watchlistOnly
                         ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-300'
                         : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300'
@@ -4091,17 +4171,17 @@ export default function App() {
                   />
                 </div>
 
-                <SlidingSegmented
-                  variant="sky"
-                  value={faPositionFilter}
-                  onChange={setFaPositionFilter}
-                  buttonClassName="!px-2.5 !font-bold"
-                  options={['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => ({
-                    id: pos,
-                    label: pos,
-                  }))}
-                />
               </div>
+
+              <SlidingSegmented
+                variant="underline"
+                value={faPositionFilter}
+                onChange={setFaPositionFilter}
+                options={['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => ({
+                  id: pos,
+                  label: pos === 'ALL' ? 'All Positions' : pos,
+                }))}
+              />
 
               {!loadingFreeAgents && freeAgents.length > 0 && (
                 <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -4131,7 +4211,7 @@ export default function App() {
                 label={`Scouting ${selectedFaClass} MLB free agents`}
               />
             ) : filteredFreeAgents.length === 0 ? (
-              <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
+              <div className="text-center py-16 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
                 <p className="text-sm font-semibold text-slate-500">
                   No matching unsigned free agents found.
                 </p>
@@ -4151,87 +4231,111 @@ export default function App() {
                 {filteredFreeAgents.map((fa, idx) => {
                   const prevTeam = getTeamInfo(fa.lastTeam);
                   const pinned = watchlistIds.includes(fa.playerId);
+                  const statCells = parseStatLineCells(fa.statLine);
                   return (
                     <div
                       key={fa.playerId || idx}
                       onClick={() => openPlayerModal(fa.playerId, fa.fullName, fa.lastTeam)}
-                      className={`p-4 rounded-2xl border bg-white dark:bg-slate-900 flex items-center justify-between gap-3 hover:border-sky-500/50 cursor-pointer transition shadow-sm ${
-                        pinned ? 'border-amber-500/40' : 'border-slate-200 dark:border-slate-800'
+                      className={`group rounded-lg border bg-white dark:bg-slate-900 flex flex-col justify-between hover:border-sky-500/50 cursor-pointer transition shadow-sm overflow-hidden ${
+                        pinned ? 'border-amber-500/45' : 'border-slate-200 dark:border-slate-800'
                       }`}
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <PlayerAvatar
-                          playerId={fa.playerId}
-                          playerName={fa.fullName}
-                          teamAbbr={fa.lastTeam}
-                        />
-                        <div className="min-w-0">
-                          <div className="font-bold text-sm sm:text-base flex items-center gap-2">
-                            <span className="truncate">{fa.fullName}</span>
-                            <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold shrink-0">
-                              {fa.position}
-                            </span>
+                      <div className="p-3.5 flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <PlayerAvatar
+                            playerId={fa.playerId}
+                            playerName={fa.fullName}
+                            teamAbbr={fa.lastTeam}
+                          />
+                          <div className="min-w-0">
+                            <div className="font-bold text-sm sm:text-[15px] flex items-center gap-1.5 group-hover:text-sky-500 transition-colors">
+                              <span className="truncate">{fa.fullName}</span>
+                              <span className="font-stat text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold text-slate-600 dark:text-slate-300 shrink-0">
+                                {fa.position}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-1">
+                              <span className="font-stat text-[11px]">Age {fa.age}</span>
+                              <span>•</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openTeamHub(prevTeam.abbr);
+                                }}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:border-sky-500/40 border border-transparent text-[10px] font-stat font-bold text-slate-700 dark:text-slate-200 transition"
+                                title="Previous club"
+                              >
+                                <TeamLogo abbr={prevTeam.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                                <span>{prevTeam.abbr}</span>
+                              </button>
+                              {fa.isSigned && fa.signedTeam && (() => {
+                                const newTeamInfo = getTeamInfo(fa.signedTeam);
+                                return (
+                                  <>
+                                    <span className="text-[10px] font-bold text-slate-400">→</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openTeamHub(newTeamInfo.abbr);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 text-[10px] font-stat font-bold text-emerald-500 hover:opacity-85 transition"
+                                      title={`Signed with ${newTeamInfo.name}`}
+                                    >
+                                      <TeamLogo abbr={newTeamInfo.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                                      <span>{newTeamInfo.abbr}</span>
+                                    </button>
+                                  </>
+                                );
+                              })()}
+                            </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
-                            <span>Age {fa.age}</span>
-                            <span>•</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openTeamHub(prevTeam.abbr);
-                              }}
-                              className="px-1.5 py-0.5 rounded text-[10px] font-black hover:opacity-85 shadow-sm"
-                              style={getTeamBadgeStyle(prevTeam.color)}
-                              title="Previous club"
-                            >
-                              {prevTeam.abbr}
-                            </button>
-                            {fa.isSigned && fa.signedTeam && (() => {
-                              const newTeamInfo = getTeamInfo(fa.signedTeam);
-                              return (
-                                <>
-                                  <span className="text-[10px] font-bold text-slate-400">→</span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openTeamHub(newTeamInfo.abbr);
-                                    }}
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-black hover:opacity-85 shadow-sm"
-                                    style={getTeamBadgeStyle(newTeamInfo.color)}
-                                    title={`Signed with ${newTeamInfo.name}`}
-                                  >
-                                    {newTeamInfo.abbr}
-                                  </button>
-                                </>
-                              );
-                            })()}
-                          </div>
-                          <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1 truncate">
-                            {fa.statLine}
-                          </p>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => toggleWatchlist(fa.playerId, fa.fullName, e)}
+                            title={pinned ? 'Remove from Watchlist' : 'Star to Watchlist'}
+                            className={`p-1.5 rounded-lg border transition ${
+                              pinned
+                                ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+                                : 'border-slate-200 dark:border-slate-800 text-slate-400 hover:text-amber-400'
+                            }`}
+                          >
+                            <Star className={`w-3.5 h-3.5 ${pinned ? 'fill-current' : ''}`} />
+                          </button>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-stat font-bold uppercase tracking-wide ${getTierBadgeStyle(fa.tier)}`}
+                          >
+                            {fa.tier}
+                          </span>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={(e) => toggleWatchlist(fa.playerId, fa.fullName, e)}
-                          title={pinned ? 'Remove from Watchlist' : 'Star to Watchlist'}
-                          className={`p-1.5 rounded-lg border transition ${
-                            pinned
-                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
-                              : 'border-slate-200 dark:border-slate-800 text-slate-400 hover:text-amber-400'
-                          }`}
+
+                      {/* Monospace Scouting Stat Strip */}
+                      {statCells.length >= 2 ? (
+                        <div
+                          className="grid border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 divide-x divide-slate-200/70 dark:divide-slate-800"
+                          style={{ gridTemplateColumns: `repeat(${statCells.length}, minmax(0, 1fr))` }}
                         >
-                          <Star className={`w-3.5 h-3.5 ${pinned ? 'fill-current' : ''}`} />
-                        </button>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${getTierBadgeStyle(fa.tier)}`}
-                        >
-                          {fa.tier}
-                        </span>
-                      </div>
+                          {statCells.map((cell, cIdx) => (
+                            <div key={cIdx} className="px-2.5 py-1.5 text-center">
+                              <div className="font-stat text-xs font-extrabold text-slate-800 dark:text-slate-100 truncate">
+                                {cell.val}
+                              </div>
+                              <div className="font-stat text-[9px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                                {cell.lbl}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="px-3.5 py-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 font-stat text-[11px] text-slate-500 truncate">
+                          {fa.statLine}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -4244,7 +4348,7 @@ export default function App() {
         {activeTab === 'scoresStandings' && (
           <div className="space-y-6">
             <div className="space-y-3">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-extrabold flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-sky-500" />
@@ -4264,7 +4368,7 @@ export default function App() {
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setScoreDate((d) => shiftDateStr(d, -1))}
-                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     title="Previous Day"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -4272,14 +4376,14 @@ export default function App() {
                   <DatePickerPopover value={scoreDate} onChange={setScoreDate} />
                   <button
                     onClick={() => setScoreDate((d) => shiftDateStr(d, 1))}
-                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
                     title="Next Day"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => setScoreDate(getLocalDateStr())}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-600 text-white hover:bg-sky-500"
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-600 text-white hover:bg-sky-500"
                   >
                     Today
                   </button>
@@ -4289,7 +4393,7 @@ export default function App() {
               {loadingScores ? (
                 <CardsGridSkeleton count={6} label={`Loading MLB scoreboard for ${scoreDate}`} />
               ) : games.length === 0 ? (
-                <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-3">
+                <div className="p-6 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-3">
                   <div className="space-y-1">
                     <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
                       No MLB games scheduled for {scoreDate}
@@ -4303,7 +4407,7 @@ export default function App() {
                       <button
                         key={q.date}
                         onClick={() => setScoreDate(q.date)}
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-sky-600 hover:text-white transition"
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-sky-600 hover:text-white transition"
                       >
                         {q.label}
                       </button>
@@ -4327,7 +4431,7 @@ export default function App() {
                       <div
                         key={g.gamePk}
                         onClick={() => openBoxScore(g.gamePk)}
-                        className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/60 cursor-pointer shadow-sm space-y-3 transition group"
+                        className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/60 cursor-pointer shadow-sm space-y-3 transition group"
                       >
                         <div className="flex items-center justify-between text-[11px] font-bold">
                           <span
@@ -4358,7 +4462,7 @@ export default function App() {
                                 }}
                                 className="flex items-center gap-2.5 text-left hover:opacity-85"
                               >
-                                <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0 shadow-sm">
+                                <span className="w-8 h-8 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0 shadow-sm">
                                   <TeamLogo abbr={info.abbr} size="sm" />
                                 </span>
                                 <div>
@@ -4407,7 +4511,7 @@ export default function App() {
             </div>
 
             <div className="space-y-3">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-extrabold">MLB Standings</h2>
                   <p className="text-xs text-slate-500">
@@ -4437,7 +4541,7 @@ export default function App() {
                   {(standingsView === 'wildCard' ? standingsData.wildCard : standingsData.divisions).map((group, idx) => (
                     <div
                       key={idx}
-                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
+                      className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
                     >
                       <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-950/60">
                         <h3 className="font-extrabold text-sm">
@@ -4517,7 +4621,7 @@ export default function App() {
         {/* League Leaders Tab */}
         {activeTab === 'leaders' && (
           <div className="space-y-4 animate-fade-up">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+            <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div>
                 <h2 className="text-xl font-extrabold flex items-center gap-2">
                   <Award className="w-5 h-5 text-amber-400" />
@@ -4562,7 +4666,7 @@ export default function App() {
                     return (
                       <div
                         key={board.category}
-                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
+                        className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
                       >
                         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between">
                           <h3 className="font-extrabold text-sm">
@@ -4653,7 +4757,7 @@ export default function App() {
         {/* Team Hub Tab — Broadcast-Quality Clubhouse & Transaction Hub */}
         {activeTab === 'teamHub' && (
           <div className="space-y-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+            <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div>
                 <h2 className="text-xl font-extrabold">30-Team Clubhouse &amp; Transaction Hub</h2>
                 <p className="text-xs text-slate-500">Official roster, payroll breakdown, Injured List, depth chart &amp; offseason moves</p>
@@ -4708,7 +4812,7 @@ export default function App() {
                 <div className="space-y-4">
                   {/* Redesigned Pro Clubhouse Hero Banner */}
                   <div
-                    className="relative overflow-hidden p-6 sm:p-7 rounded-2xl text-white shadow-xl border border-white/10"
+                    className="relative overflow-hidden p-6 sm:p-7 rounded-lg text-white shadow-xl border border-white/10"
                     style={{
                       background: `linear-gradient(135deg, ${info.color} 0%, #0f172a 128%)`,
                     }}
@@ -4730,7 +4834,7 @@ export default function App() {
                     <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                       {/* Left: Glass Logo Medallion + Club Name + Record Pills */}
                       <div className="flex items-center gap-4 sm:gap-5 min-w-0">
-                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/10 backdrop-blur-md border border-white/25 p-2.5 sm:p-3 flex items-center justify-center shadow-2xl shrink-0">
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-white/10 backdrop-blur-md border border-white/25 p-2.5 sm:p-3 flex items-center justify-center shadow-2xl shrink-0">
                           <TeamLogo abbr={info.abbr} size="xl" className="!w-full !h-full drop-shadow-lg" />
                         </div>
 
@@ -4793,7 +4897,7 @@ export default function App() {
                           ].map((tile, idx) => (
                             <div
                               key={idx}
-                              className="px-3.5 py-2.5 rounded-xl bg-black/25 backdrop-blur-md border border-white/15 text-center min-w-[84px]"
+                              className="px-3.5 py-2.5 rounded-lg bg-black/25 backdrop-blur-md border border-white/15 text-center min-w-[84px]"
                             >
                               <div className="text-xl sm:text-2xl font-black tabular-nums leading-tight">{tile.val}</div>
                               <div className="text-[10px] font-bold text-white/75 mt-0.5 whitespace-nowrap">{tile.label}</div>
@@ -4805,7 +4909,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={copyShareUrl}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
                           >
                             {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Share2 className="w-3.5 h-3.5" />}
                             <span>{copiedLink ? 'Copied!' : 'Share Club'}</span>
@@ -4815,7 +4919,7 @@ export default function App() {
                               href={`https://www.mlb.com/team/${mlbClubId}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
                             >
                               <span>MLB.com</span>
                               <ExternalLink className="w-3 h-3" />
@@ -4836,7 +4940,7 @@ export default function App() {
                     const maxHistPayroll = Math.max(1, ...history.map((h) => Number(h.payroll || 0)));
 
                     return (
-                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
+                      <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h4 className="font-extrabold text-base flex items-center gap-2">
@@ -4870,7 +4974,7 @@ export default function App() {
                         </div>
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2027 Payroll Proj</div>
                             <div className="text-xl font-black text-emerald-500 tabular-nums mt-0.5">${p27.payroll ?? '—'}M</div>
                             {liveTeamAdd > 0 ? (
@@ -4879,17 +4983,17 @@ export default function App() {
                               <div className="text-[10px] text-slate-500 mt-0.5">Active 40-Man Proj</div>
                             )}
                           </div>
-                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2027 Luxury Tax</div>
                             <div className="text-xl font-black tabular-nums mt-0.5">${p27.cbt ?? '—'}M</div>
                             <div className="text-[10px] text-slate-500 mt-0.5">CBT / AAV Basis</div>
                           </div>
-                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2026 Roster Price</div>
                             <div className="text-xl font-black tabular-nums mt-0.5">${p26.payroll ?? '—'}M</div>
                             <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">2025: ${TEAM_PAYROLLS['2025']?.[hubTeam]?.payroll ?? '—'}M</div>
                           </div>
-                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2028–30 Committed</div>
                             <div className="text-sm font-black mt-1 tabular-nums">
                               ${p27.y2028 ?? 0}M / ${p27.y2029 ?? 0}M / ${p27.y2030 ?? 0}M
@@ -4929,7 +5033,7 @@ export default function App() {
                             return (
                               <div
                                 key={h.year}
-                                className="px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-1.5"
+                                className="px-3 py-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-1.5"
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] font-bold text-slate-400">
@@ -4954,10 +5058,10 @@ export default function App() {
                   })()}
 
                   {/* Live Active Roster / Depth Chart & Injured List */}
-                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
+                  <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5">
-                        <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
+                        <span className="w-8 h-8 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
                           <TeamLogo abbr={info.abbr} size="sm" />
                         </span>
                         <div>
@@ -4978,7 +5082,7 @@ export default function App() {
                             value={hubRosterSearch}
                             onChange={(e) => setHubRosterSearch(e.target.value)}
                             placeholder={`Filter ${info.short} roster...`}
-                            className="w-full pl-8 pr-7 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                            className="w-full pl-8 pr-7 py-1.5 rounded-lg text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
                           />
                           {hubRosterSearch && (
                             <button
@@ -5011,7 +5115,7 @@ export default function App() {
                       <div className="text-center py-8 text-xs text-slate-400">Roster data unavailable right now.</div>
                     ) : hubRosterView === 'il' ? (
                       hubRoster.injuredList.filter(matchesRosterSearch).length === 0 ? (
-                        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
+                        <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
                           {rosterQuery
                             ? `No Injured List players match "${hubRosterSearch}".`
                             : `No players currently listed on the ${info.short} Injured List.`}
@@ -5023,7 +5127,7 @@ export default function App() {
                               key={p.playerId}
                               type="button"
                               onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
-                              className="p-3 rounded-xl border border-rose-500/25 bg-rose-500/5 hover:bg-rose-500/10 flex items-center justify-between text-left transition"
+                              className="p-3 rounded-lg border border-rose-500/25 bg-rose-500/5 hover:bg-rose-500/10 flex items-center justify-between text-left transition"
                             >
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <PlayerAvatar playerId={p.playerId} playerName={p.fullName} teamAbbr={hubTeam} size="sm" />
@@ -5049,7 +5153,7 @@ export default function App() {
                         ].map((grp) => {
                           const playersInGrp = (hubRoster.depthChart?.[grp.key] || []).filter(matchesRosterSearch);
                           return (
-                            <div key={grp.key} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-2">
+                            <div key={grp.key} className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-2">
                               <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between pb-1 border-b border-slate-200/70 dark:border-slate-800/80">
                                 <span>{grp.label}</span>
                                 <span className="px-1.5 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-[10px] font-black tabular-nums">
@@ -5101,7 +5205,7 @@ export default function App() {
                             key={p.playerId}
                             type="button"
                             onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
-                            className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 hover:border-sky-500/40 flex items-center gap-2.5 text-left transition group"
+                            className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 hover:border-sky-500/40 flex items-center gap-2.5 text-left transition group"
                           >
                             <PlayerAvatar playerId={p.playerId} playerName={p.fullName} teamAbbr={hubTeam} size="sm" />
                             <div className="min-w-0">
@@ -5120,7 +5224,7 @@ export default function App() {
 
                   {/* Additions & Departures Columns with Player Avatars */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                    <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-extrabold text-sm uppercase tracking-wider text-emerald-500">
                           Additions &amp; Club Activity
@@ -5137,7 +5241,7 @@ export default function App() {
                             <li
                               key={a.id}
                               onClick={() => a.player_id && openPlayerModal(a.player_id, a.player_name, hubTeam)}
-                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
+                              className={`p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
                                 a.player_id ? 'cursor-pointer hover:border-emerald-500/40' : ''
                               }`}
                             >
@@ -5164,7 +5268,7 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                    <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-extrabold text-sm uppercase tracking-wider text-rose-500">
                           Departures &amp; Releases
@@ -5181,7 +5285,7 @@ export default function App() {
                             <li
                               key={s.id}
                               onClick={() => s.player_id && openPlayerModal(s.player_id, s.player_name, hubTeam)}
-                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
+                              className={`p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
                                 s.player_id ? 'cursor-pointer hover:border-rose-500/40' : ''
                               }`}
                             >
@@ -5260,7 +5364,7 @@ export default function App() {
           return (
             <div className="space-y-4">
               {/* Top Mode & Year Switcher */}
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+              <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-extrabold">
                     {spendingMode === 'payroll'
@@ -5306,8 +5410,8 @@ export default function App() {
               {spendingMode === 'payroll' ? (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
                         <DollarSign className="w-5 h-5" />
                       </div>
                       <div>
@@ -5315,8 +5419,8 @@ export default function App() {
                         <div className="text-xs text-slate-500">Total MLB Payroll ({payrollYear})</div>
                       </div>
                     </div>
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
                         <Activity className="w-5 h-5" />
                       </div>
                       <div>
@@ -5324,8 +5428,8 @@ export default function App() {
                         <div className="text-xs text-slate-500">Average Club Roster Price</div>
                       </div>
                     </div>
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-rose-500/15 text-rose-500 flex items-center justify-center">
                         <Trophy className="w-5 h-5" />
                       </div>
                       <div>
@@ -5335,7 +5439,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                     <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:gap-px bg-slate-100 dark:bg-slate-800">
                       {payrollRows.map((row, idx) => {
                         const pct = Math.max(8, (row.payroll / maxPayroll) * 100);
@@ -5348,7 +5452,7 @@ export default function App() {
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <span className="w-6 text-xs font-black text-slate-400 shrink-0 tabular-nums">#{idx + 1}</span>
-                                <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
+                                <span className="w-8 h-8 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
                                   <TeamLogo abbr={row.team.abbr} size="sm" />
                                 </span>
                                 <div className="min-w-0">
@@ -5399,8 +5503,8 @@ export default function App() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
                         <DollarSign className="w-5 h-5" />
                       </div>
                       <div>
@@ -5408,8 +5512,8 @@ export default function App() {
                         <div className="text-xs text-slate-500">Disclosed New Deals ({spendingCycle})</div>
                       </div>
                     </div>
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
                         <Activity className="w-5 h-5" />
                       </div>
                       <div>
@@ -5417,8 +5521,8 @@ export default function App() {
                         <div className="text-xs text-slate-500">MLB Moves in {spendingCycle}</div>
                       </div>
                     </div>
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center">
                         <Trophy className="w-5 h-5" />
                       </div>
                       <div>
@@ -5430,7 +5534,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
                     {loadingSpending ? (
                       <BaseballLoader label={`Crunching ${spendingCycle} MLB offseason moves`} compact />
                     ) : (
@@ -5542,7 +5646,7 @@ export default function App() {
           onClick={() => setPlayerSearchOpen(false)}
         >
           <div
-            className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
+            className="w-full max-w-lg rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
@@ -5593,7 +5697,7 @@ export default function App() {
                               setPlayerSearchOpen(false);
                               openPlayerModal(rp.id, rp.fullName, rp.teamAbbr);
                             }}
-                            className="w-full p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left transition"
+                            className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left transition"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={rp.teamAbbr} size="sm" />
@@ -5636,7 +5740,7 @@ export default function App() {
                           setPlayerSearchOpen(false);
                           openPlayerModal(p.id, p.fullName, p.teamAbbr || 'MLB');
                         }}
-                        className="w-full p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left transition"
+                        className="w-full p-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left transition"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <PlayerAvatar
@@ -5694,7 +5798,7 @@ export default function App() {
           onClick={() => setSelectedGamePk(null)}
         >
           <div
-            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-10 px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex items-center justify-between gap-3">
@@ -5721,7 +5825,7 @@ export default function App() {
                   onClick={() => openBoxScore(selectedGamePk, { silent: true })}
                   disabled={refreshingBoxScore || loadingBoxScore}
                   title="Refresh Box Score & Highlights"
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 disabled:opacity-50 transition"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 disabled:opacity-50 transition"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 text-sky-500 ${refreshingBoxScore ? 'animate-spin' : ''}`} />
                   <span className="hidden sm:inline">Refresh</span>
@@ -5729,14 +5833,14 @@ export default function App() {
                 <button
                   onClick={copyShareUrl}
                   title="Copy direct link to this game"
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 transition"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 transition"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
                   <span className="hidden sm:inline">{copiedLink ? 'Copied!' : 'Share'}</span>
                 </button>
                 <button
                   onClick={() => setSelectedGamePk(null)}
-                  className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
                   title="Close (Esc)"
                 >
                   <X className="w-5 h-5" />
@@ -5766,7 +5870,7 @@ export default function App() {
                 return (
                   <>
                     {/* Scoreboard Banner + Live Count/Bases */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center p-4 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
                       <div className="md:col-span-8 space-y-2">
                         {[
                           { info: awayInfo, runs: ls.away.runs, hits: ls.away.hits, err: ls.away.errors },
@@ -5777,7 +5881,7 @@ export default function App() {
                               onClick={() => openTeamHub(row.info.abbr)}
                               className="flex items-center gap-2.5 hover:opacity-85"
                             >
-                              <span className="w-9 h-9 rounded-xl bg-slate-900/90 dark:bg-slate-900 border border-slate-700/50 flex items-center justify-center p-1.5 shrink-0 shadow-sm">
+                              <span className="w-9 h-9 rounded-lg bg-slate-900/90 dark:bg-slate-900 border border-slate-700/50 flex items-center justify-center p-1.5 shrink-0 shadow-sm">
                                 <TeamLogo abbr={row.info.abbr} size="sm" />
                               </span>
                               <span className="font-extrabold text-sm sm:text-base">{row.info.name}</span>
@@ -5823,11 +5927,11 @@ export default function App() {
                         href={featuredRecap.mlbUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="group relative overflow-hidden w-full p-3 sm:p-3.5 rounded-2xl border border-rose-500/30 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-sky-500/10 hover:border-rose-500/60 hover:shadow-lg hover:shadow-rose-500/10 flex items-center justify-between gap-3.5 text-left transition-all"
+                        className="group relative overflow-hidden w-full p-3 sm:p-3.5 rounded-lg border border-rose-500/30 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-sky-500/10 hover:border-rose-500/60 hover:shadow-lg hover:shadow-rose-500/10 flex items-center justify-between gap-3.5 text-left transition-all"
                       >
                         <div className="flex items-center gap-3.5 min-w-0">
                           {featuredRecap.thumbnail ? (
-                            <div className="relative w-20 sm:w-24 aspect-video rounded-xl overflow-hidden bg-slate-900 border border-white/15 shrink-0 shadow-md">
+                            <div className="relative w-20 sm:w-24 aspect-video rounded-lg overflow-hidden bg-slate-900 border border-white/15 shrink-0 shadow-md">
                               <img
                                 src={featuredRecap.thumbnail}
                                 alt={featuredRecap.headline}
@@ -5840,7 +5944,7 @@ export default function App() {
                               </div>
                             </div>
                           ) : (
-                            <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                            <div className="w-10 h-10 rounded-lg bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
                               <Play className="w-4 h-4 fill-current ml-0.5" />
                             </div>
                           )}
@@ -5865,7 +5969,7 @@ export default function App() {
                           </div>
                         </div>
 
-                        <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-rose-600 group-hover:bg-rose-500 text-white shadow-sm shrink-0 transition">
+                        <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-extrabold bg-rose-600 group-hover:bg-rose-500 text-white shadow-sm shrink-0 transition">
                           <span>Watch</span>
                           <ExternalLink className="w-3.5 h-3.5" />
                         </span>
@@ -5874,7 +5978,7 @@ export default function App() {
 
                     {/* Inning-by-Inning Linescore */}
                     {ls.innings?.length > 0 && (
-                      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
                         <table className="w-full text-xs text-center border-collapse">
                           <thead>
                             <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400">
@@ -5939,7 +6043,7 @@ export default function App() {
                               href={boxScore.gameVideoHubUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 text-sky-600 dark:text-sky-400 transition"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 text-sky-600 dark:text-sky-400 transition"
                             >
                               <span>All Game Videos on MLB.com</span>
                               <ExternalLink className="w-3.5 h-3.5" />
@@ -5948,7 +6052,7 @@ export default function App() {
                         </div>
 
                         {highlightsList.length === 0 ? (
-                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-3">
+                          <div className="p-8 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-3">
                             <p className="text-xs text-slate-400">
                               No official MLB highlight clips are published for this game yet (clips appear as big plays happen and full recaps post shortly after the final out).
                             </p>
@@ -5957,7 +6061,7 @@ export default function App() {
                                 href={boxScore.gameVideoHubUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition"
                               >
                                 <span>Check MLB.com Gameday Video</span>
                                 <ExternalLink className="w-3.5 h-3.5" />
@@ -5974,7 +6078,7 @@ export default function App() {
                                   href={leadClip.mlbUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="group block rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 hover:border-rose-500/60 bg-slate-950 shadow-md hover:shadow-xl transition-all"
+                                  className="group block rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 hover:border-rose-500/60 bg-slate-950 shadow-md hover:shadow-xl transition-all"
                                 >
                                   <div className="relative aspect-[16/9] sm:aspect-[21/9] w-full bg-slate-900 overflow-hidden">
                                     {leadClip.thumbnail ? (
@@ -6041,7 +6145,7 @@ export default function App() {
                                     href={clip.mlbUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="group rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500/60 hover:shadow-lg transition-all flex flex-col"
+                                    className="group rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500/60 hover:shadow-lg transition-all flex flex-col"
                                   >
                                     <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
                                       {clip.thumbnail ? (
@@ -6091,14 +6195,14 @@ export default function App() {
                       /* TAB: SCORING PLAYS LOG */
                       <div className="space-y-2.5">
                         {scoringList.length === 0 ? (
-                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                          <div className="p-8 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
                             No scoring plays recorded yet.
                           </div>
                         ) : (
                           scoringList.map((sp, i) => (
                             <div
                               key={`${sp.atBatIndex}-${i}`}
-                              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-start justify-between gap-3"
+                              className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-start justify-between gap-3"
                             >
                               <div className="space-y-1 min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -6137,7 +6241,7 @@ export default function App() {
                           {activeSide.batters.length === 0 ? (
                             <p className="text-xs text-slate-400">Lineup / batting stats not posted yet.</p>
                           ) : (
-                            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
                               <table className="w-full text-xs text-left border-collapse">
                                 <thead>
                                   <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
@@ -6200,7 +6304,7 @@ export default function App() {
                           {activeSide.pitchers.length === 0 ? (
                             <p className="text-xs text-slate-400">Pitching lines not posted yet.</p>
                           ) : (
-                            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
                               <table className="w-full text-xs text-left border-collapse">
                                 <thead>
                                   <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
@@ -6303,13 +6407,13 @@ export default function App() {
             <div className="flex gap-2">
               <button
                 onClick={saveMyTeams}
-                className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-sky-500 text-sky-500"
+                className="flex-1 py-2.5 rounded-lg text-xs font-bold border border-sky-500 text-sky-500"
               >
                 Save My Teams
               </button>
               <button
                 onClick={() => setMobileFilterOpen(false)}
-                className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-sky-600 text-white"
+                className="flex-1 py-2.5 rounded-lg text-xs font-bold bg-sky-600 text-white"
               >
                 Done
               </button>
