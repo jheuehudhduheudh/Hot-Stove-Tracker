@@ -89,7 +89,6 @@ function parseContractDetails(title, description = '') {
   }
 
   let totalMillions = null;
-  // Matches $245M, $245MM, $245.5 million, $18-million, $46.5-million, $1.2B, $750K
   const moneyMatch = combined.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)[\s-]*(MM|M|million|B|billion|K|thousand)?\b/i);
   if (moneyMatch) {
     const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
@@ -134,7 +133,7 @@ function parseRssItems(xml) {
 
   const speculationPattern = /(had\s+interest|have\s+interest|expressed\s+interest|receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|trade\s+deadline|listening\s+to|could\s+|might\s+|rumors|mailbag|live\s+chat|poll|predictions|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|expected\s+to\s+shop|shopping\s+|offseason\s+outlook|arbitration\s+projections|predicted\s+salaries|free\s+agent\s+profile|contract\s+prediction)/i;
 
-  const actionPattern = /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|acquire|acquires|acquired|trade|trades|traded|extend|extends|extended|extension|designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|exercise|exercises|exercised|decline|declines|declined|accept|accepts|accepted|qualifying\s+offer|outright|outrighted)\b/i;
+  const actionPattern = /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|acquire|acquires|acquired|trade|trades|traded|extend|extends|extended|extension|designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|exercise|exercises|exercised|decline|declines|declined|accept|accepts|accepted|qualifying\s+offer|outright|outrighted|recall|recalled|option|optioned|injured\s+list)\b/i;
 
   for (const block of itemBlocks.slice(0, 45)) {
     const rawTitle =
@@ -165,7 +164,7 @@ function parseRssItems(xml) {
       moveType = 'TRADE';
     } else if (/\b(extend|extends|extended|extension)\b/i.test(title)) {
       moveType = 'EXTENSION';
-    } else if (/\b(designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|outright|outrighted|decline|declines|declined)\b/i.test(title)) {
+    } else if (/\b(designate|designates|designated|dfa|claim|claims|claimed|release|releases|released|non-tender|non-tenders|non-tendered|outright|outrighted|decline|declines|declined|recall|recalled|option|optioned|injured\s+list)\b/i.test(title)) {
       moveType = 'DFA_WAIVER';
     }
 
@@ -173,7 +172,7 @@ function parseRssItems(xml) {
 
     let playerName = null;
     const agreeMatch = title.match(/^[A-Za-z\s.'-]+,\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)\s+Agree/i);
-    const verbMatch = title.match(/\b(?:Sign|Signs|Re-Sign|Re-Signs|Acquire|Acquires|Extend|Extends|Designate|Designates|Claim|Claims|Release|Releases|Non-Tender|Non-Tenders|Exercise|Decline)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/);
+    const verbMatch = title.match(/\b(?:Sign|Signs|Re-Sign|Re-Signs|Acquire|Acquires|Extend|Extends|Designate|Designates|Claim|Claims|Release|Releases|Non-Tender|Non-Tenders|Exercise|Decline|Recall|Option)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/);
     if (agreeMatch) playerName = agreeMatch[1].trim();
     else if (verbMatch) playerName = verbMatch[1].trim();
 
@@ -237,7 +236,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // Auto-clean winter league / minor-league / broken HTML / throwback rumor rows
   try {
     await supabase.from('transactions').delete().is('to_team', null).is('from_team', null).is('team_a', null);
     await supabase.from('transactions').delete().ilike('headline', '%assigned to%');
@@ -262,7 +260,7 @@ export default async function handler(req, res) {
   for (const feedUrl of rssFeeds) {
     try {
       const rssRes = await fetch(feedUrl, {
-        headers: { 'User-Agent': 'HotStoveTracker/1.3' },
+        headers: { 'User-Agent': 'HotStoveTracker/1.4' },
       });
       if (!rssRes.ok) continue;
       const xml = await rssRes.text();
@@ -304,7 +302,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // Official MLB Stats API Transactions — Strictly 30 MLB Teams Only (Last 30 Days)
   try {
     const end = new Date();
     const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -319,7 +316,7 @@ export default async function handler(req, res) {
 
       const tradeGroups = new Map();
       const singleTx = [];
-      const ALLOWED_SINGLE_CODES = new Set(['SFA', 'SGN', 'CLW', 'DFA', 'REL', 'SE', 'OUT']);
+      const ALLOWED_SINGLE_CODES = new Set(['SFA', 'SGN', 'CLW', 'DFA', 'REL', 'SE', 'OUT', 'IL', 'CU', 'OPT', 'REC']);
 
       for (const tx of rawTx) {
         const toMlb = MLB_TEAM_ID_TO_ABBR[tx.toTeam?.id] || null;
@@ -327,26 +324,26 @@ export default async function handler(req, res) {
         const desc = tx.description || '';
 
         if (!toMlb && !fromMlb) continue;
-        if (/\bassigned to\b/i.test(desc)) continue;
+        if (/\bassigned to\b/i.test(desc) && !/rehab assignment/i.test(desc)) continue;
 
         if (tx.typeCode === 'TR') {
           const key = tx.tradeId || `${tx.date}-${desc.slice(0, 40)}`;
           if (!tradeGroups.has(key)) tradeGroups.set(key, []);
           tradeGroups.get(key).push(tx);
         } else if (ALLOWED_SINGLE_CODES.has(tx.typeCode)) {
-          if (['SFA', 'SGN', 'CLW', 'SE'].includes(tx.typeCode) && !toMlb) continue;
+          if (['SFA', 'SGN', 'CLW', 'SE', 'CU', 'REC'].includes(tx.typeCode) && !toMlb) continue;
           singleTx.push({ ...tx, _toMlb: toMlb, _fromMlb: fromMlb });
         }
       }
 
-      for (const tx of singleTx.slice(-100)) {
+      for (const tx of singleTx.slice(-110)) {
         const extId = `mlb-tx-${tx.id}`;
         const playerName = tx.person?.fullName || 'Unknown Player';
         const toTeam = tx._toMlb;
         const fromTeam = tx._fromMlb;
         const desc = decodeHtml(tx.description || `${tx.toTeam?.name || 'MLB'} transaction involving ${playerName}`);
         const isMinor = /minor league/i.test(desc);
-        const moveType = ['DFA', 'CLW', 'REL', 'OUT'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
+        const moveType = ['DFA', 'CLW', 'REL', 'OUT', 'IL', 'CU', 'OPT', 'REC'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
 
         if (toTeam && playerName && playerName !== 'Unknown Player') {
           const { data: matchingReported } = await supabase
