@@ -9,7 +9,7 @@ import {
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 
-const STAT_YEARS = ['2026', '2025', '2024', '2023', '2022', 'career'];
+const FA_CLASS_YEARS = ['2026', '2025', '2024', '2023', '2022'];
 const SEASON_YEARS = ['2026', '2025', '2024', '2023', '2022'];
 
 const LEADER_LABELS = {
@@ -133,9 +133,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('feed');
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
-  const [selectedStatYear, setSelectedStatYear] = useState('2026');
+  const [selectedFaClass, setSelectedFaClass] = useState('2026');
+  const [faStatMode, setFaStatMode] = useState('season');
+  const [faSignedFilter, setFaSignedFilter] = useState('UNSIGNED');
   const [loadingFreeAgents, setLoadingFreeAgents] = useState(true);
   const [faSearch, setFaSearch] = useState('');
+
+  // Global MLB Player Search state
+  const [playerSearchOpen, setPlayerSearchOpen] = useState(false);
+  const [globalPlayerQuery, setGlobalPlayerQuery] = useState('');
+  const [globalPlayerResults, setGlobalPlayerResults] = useState([]);
+  const [searchingPlayers, setSearchingPlayers] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -302,10 +310,12 @@ export default function App() {
     setLoading(false);
   };
 
-  const fetchFreeAgents = async (seasonParam = selectedStatYear) => {
+  const fetchFreeAgents = async (classParam = selectedFaClass, modeParam = faStatMode) => {
     setLoadingFreeAgents(true);
     try {
-      const res = await fetch(`/api/free-agents?season=${encodeURIComponent(seasonParam)}`);
+      const res = await fetch(
+        `/api/free-agents?classYear=${encodeURIComponent(classParam)}&statMode=${encodeURIComponent(modeParam)}`
+      );
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data?.freeAgents)) {
@@ -375,8 +385,36 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchFreeAgents(selectedStatYear);
-  }, [selectedStatYear]);
+    fetchFreeAgents(selectedFaClass, faStatMode);
+  }, [selectedFaClass, faStatMode]);
+
+  useEffect(() => {
+    const q = globalPlayerQuery.trim();
+    if (q.length < 2) {
+      setGlobalPlayerResults([]);
+      setSearchingPlayers(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchingPlayers(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/player?q=${encodeURIComponent(q)}`)
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((data) => {
+          if (!cancelled) setGlobalPlayerResults(Array.isArray(data?.results) ? data.results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setGlobalPlayerResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearchingPlayers(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [globalPlayerQuery]);
 
   useEffect(() => {
     if (activeTab === 'scoresStandings') {
@@ -521,6 +559,8 @@ export default function App() {
 
   const filteredFreeAgents = useMemo(() => {
     const list = freeAgents.filter((fa) => {
+      if (faSignedFilter === 'UNSIGNED' && fa.isSigned) return false;
+      if (faSignedFilter === 'SIGNED' && !fa.isSigned) return false;
       if (watchlistOnly && !watchlistIds.includes(fa.playerId)) return false;
       if (faPositionFilter !== 'ALL') {
         if (faPositionFilter === 'P') {
@@ -543,7 +583,7 @@ export default function App() {
       const bPin = watchlistIds.includes(b.playerId) ? 1 : 0;
       return bPin - aPin;
     });
-  }, [freeAgents, faPositionFilter, faSearch, watchlistOnly, watchlistIds]);
+  }, [freeAgents, faPositionFilter, faSearch, watchlistOnly, watchlistIds, faSignedFilter]);
 
   const toggleTeam = (abbr) => {
     setMyTeamsOnlyActive(false);
@@ -762,6 +802,19 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setPlayerSearchOpen(true);
+                setGlobalPlayerQuery('');
+                setGlobalPlayerResults([]);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
+              title="Search any MLB player"
+            >
+              <Search className="w-3.5 h-3.5 text-sky-500" />
+              <span className="hidden sm:inline">Search Player</span>
+            </button>
+
             <button
               onClick={() => handleSyncNow(true)}
               disabled={syncing}
@@ -1414,26 +1467,50 @@ export default function App() {
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-extrabold">Available MLB Free Agents</h2>
+                  <h2 className="text-xl font-extrabold">{selectedFaClass} MLB Free Agent Class</h2>
                   <p className="text-xs text-slate-500">
-                    Showing {selectedStatYear === 'career' ? 'Career MLB' : `${selectedStatYear} MLB`} stats • Star players to pin them to your Watchlist
+                    {selectedFaClass} offseason free agents • Showing {faStatMode === 'career' ? 'Career MLB' : `${selectedFaClass} MLB`} stats
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
-                  {STAT_YEARS.map((yr) => (
-                    <button
-                      key={yr}
-                      onClick={() => setSelectedStatYear(yr)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                        selectedStatYear === yr
-                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      {yr === 'career' ? 'Career' : yr}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+                    {FA_CLASS_YEARS.map((yr) => (
+                      <button
+                        key={yr}
+                        onClick={() => {
+                          setSelectedFaClass(yr);
+                          setFaSignedFilter(yr === '2026' ? 'UNSIGNED' : 'ALL');
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                          selectedFaClass === yr
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        {yr}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
+                    {[
+                      { id: 'season', label: `${selectedFaClass} Stats` },
+                      { id: 'career', label: 'Career' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setFaStatMode(m.id)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                          faStatMode === m.id
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1460,6 +1537,25 @@ export default function App() {
                     <Bookmark className={`w-3.5 h-3.5 ${watchlistOnly ? 'fill-current' : ''}`} />
                     <span>Watchlist ({watchlistIds.length})</span>
                   </button>
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    {[
+                      { id: 'ALL', label: 'All' },
+                      { id: 'UNSIGNED', label: 'Unsigned' },
+                      { id: 'SIGNED', label: 'Signed' },
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        onClick={() => setFaSignedFilter(st.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                          faSignedFilter === st.id
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap gap-1.5">
@@ -1482,7 +1578,7 @@ export default function App() {
 
             {loadingFreeAgents ? (
               <div className="text-center py-16 text-sm text-slate-400">
-                Fetching live MLB free agent list &amp; {selectedStatYear === 'career' ? 'career' : selectedStatYear} stats...
+                Fetching {selectedFaClass} MLB free agent class &amp; {faStatMode === 'career' ? 'career' : selectedFaClass} stats...
               </div>
             ) : filteredFreeAgents.length === 0 ? (
               <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
@@ -1526,7 +1622,7 @@ export default function App() {
                               {fa.position}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                             <span>Age {fa.age}</span>
                             <span>•</span>
                             <button
@@ -1537,9 +1633,30 @@ export default function App() {
                               }}
                               className="px-1.5 py-0.2 rounded text-[10px] font-black text-white hover:opacity-85"
                               style={{ backgroundColor: prevTeam.color }}
+                              title="Previous club"
                             >
                               {prevTeam.abbr}
                             </button>
+                            {fa.isSigned && fa.signedTeam && (() => {
+                              const newTeamInfo = getTeamInfo(fa.signedTeam);
+                              return (
+                                <>
+                                  <span className="text-[10px] font-bold text-slate-400">→</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openTeamHub(newTeamInfo.abbr);
+                                    }}
+                                    className="px-1.5 py-0.2 rounded text-[10px] font-black text-white hover:opacity-85"
+                                    style={{ backgroundColor: newTeamInfo.color }}
+                                    title={`Signed with ${newTeamInfo.name}`}
+                                  >
+                                    {newTeamInfo.abbr}
+                                  </button>
+                                </>
+                              );
+                            })()}
                           </div>
                           <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1 truncate">
                             {fa.statLine}
@@ -2388,6 +2505,110 @@ export default function App() {
           );
         })}
       </nav>
+
+      {/* Global MLB Player Search Modal */}
+      {playerSearchOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-16 sm:pt-24 p-4"
+          onClick={() => setPlayerSearchOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <Search className="w-5 h-5 text-sky-500 shrink-0" />
+              <input
+                type="text"
+                autoFocus
+                value={globalPlayerQuery}
+                onChange={(e) => setGlobalPlayerQuery(e.target.value)}
+                placeholder="Search any MLB player (e.g., Shohei Ohtani, Aaron Judge)..."
+                className="w-full bg-transparent text-sm font-semibold focus:outline-none"
+              />
+              <button
+                onClick={() => setPlayerSearchOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-96 overflow-y-auto p-2">
+              {globalPlayerQuery.trim().length < 2 ? (
+                <div className="py-10 text-center text-xs text-slate-400">
+                  Type at least 2 letters to search active and historical MLB players.
+                </div>
+              ) : searchingPlayers ? (
+                <div className="py-10 text-center text-xs text-slate-400">
+                  Searching MLB Stats API...
+                </div>
+              ) : globalPlayerResults.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-400">
+                  No MLB players found matching &ldquo;{globalPlayerQuery}&rdquo;.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {globalPlayerResults.map((p) => {
+                    const tInfo = p.teamAbbr ? getTeamInfo(p.teamAbbr) : null;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setPlayerSearchOpen(false);
+                          openPlayerModal(p.id, p.fullName, p.teamAbbr || 'MLB');
+                        }}
+                        className="w-full p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left transition"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <PlayerAvatar
+                            playerId={p.id}
+                            playerName={p.fullName}
+                            teamAbbr={p.teamAbbr || 'MLB'}
+                            size="sm"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold truncate flex items-center gap-1.5">
+                              <span>{p.fullName}</span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                                {p.position}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                              {tInfo ? (
+                                <span
+                                  className="px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                                  style={{ backgroundColor: tInfo.color }}
+                                >
+                                  {tInfo.abbr}
+                                </span>
+                              ) : (
+                                <span>{p.teamName}</span>
+                              )}
+                              {p.age && <span>• Age {p.age}</span>}
+                              {p.mlbDebutDate && <span>• Debut {p.mlbDebutDate.slice(0, 4)}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                            p.active
+                              ? 'bg-emerald-500/15 text-emerald-500'
+                              : 'bg-slate-500/15 text-slate-400'
+                          }`}
+                        >
+                          {p.active ? 'Active' : 'Historical'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clickable Player Year-by-Year Stats Modal */}
       {selectedPlayer && (
