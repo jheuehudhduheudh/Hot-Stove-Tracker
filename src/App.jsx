@@ -3,12 +3,29 @@ import {
   RefreshCw, Sun, Moon, Search, Filter, Download, Lock, Unlock,
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database,
-  ExternalLink, DollarSign, Activity, Star, BarChart3
+  ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
+  ChevronLeft, ChevronRight, Award
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 
 const STAT_YEARS = ['2026', '2025', '2024', '2023', '2022', 'career'];
+const SEASON_YEARS = ['2026', '2025', '2024', '2023', '2022'];
+
+const LEADER_LABELS = {
+  homeRuns: 'Home Runs (HR)',
+  battingAverage: 'Batting Average (AVG)',
+  onBasePlusSlugging: 'OPS',
+  runsBattedIn: 'Runs Batted In (RBI)',
+  stolenBases: 'Stolen Bases (SB)',
+  hits: 'Hits (H)',
+  earnedRunAverage: 'ERA',
+  whip: 'WHIP',
+  strikeouts: 'Strikeouts (SO)',
+  saves: 'Saves (SV)',
+  wins: 'Wins (W)',
+  inningsPitched: 'Innings Pitched (IP)',
+};
 
 function isFreeAgencyElection(tx) {
   const h = (tx?.headline || '').toLowerCase();
@@ -18,6 +35,12 @@ function isFreeAgencyElection(tx) {
 function getEffectiveMoveType(tx) {
   if (isFreeAgencyElection(tx)) return 'FREE_AGENCY';
   return tx?.move_type || 'SIGNING';
+}
+
+function shiftDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
 }
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
@@ -84,6 +107,21 @@ export default function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [syncNotice, setSyncNotice] = useState('');
   const autoSyncTriggeredRef = useRef(false);
+
+  // Scores & Standings state
+  const [scoreDate, setScoreDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [games, setGames] = useState([]);
+  const [loadingScores, setLoadingScores] = useState(false);
+  const [standingsSeason, setStandingsSeason] = useState('2026');
+  const [standingsView, setStandingsView] = useState('divisions');
+  const [standingsData, setStandingsData] = useState({ divisions: [], wildCard: [] });
+  const [loadingStandings, setLoadingStandings] = useState(false);
+
+  // League Leaders state
+  const [leadersSeason, setLeadersSeason] = useState('2026');
+  const [leadersGroup, setLeadersGroup] = useState('hitting');
+  const [leadersData, setLeadersData] = useState({ hitting: [], pitching: [] });
+  const [loadingLeaders, setLoadingLeaders] = useState(false);
 
   // Player Year-by-Year Stats Modal
   const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -182,7 +220,6 @@ export default function App() {
         if (syncedIso) setLastSyncedAt(syncedIso);
         setLoading(false);
 
-        // Background auto-sync if last sync is older than 15 minutes
         if (allowAutoSync && !autoSyncTriggeredRef.current) {
           const ageMs = syncedIso ? Date.now() - new Date(syncedIso).getTime() : Infinity;
           if (ageMs > 15 * 60 * 1000) {
@@ -210,9 +247,60 @@ export default function App() {
         }
       }
     } catch {
-      // Leave empty if unreachable
+      // Leave empty
     } finally {
       setLoadingFreeAgents(false);
+    }
+  };
+
+  const fetchScores = async (dateParam = scoreDate) => {
+    setLoadingScores(true);
+    try {
+      const res = await fetch(`/api/season?type=scores&date=${encodeURIComponent(dateParam)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGames(Array.isArray(data?.games) ? data.games : []);
+      }
+    } catch {
+      setGames([]);
+    } finally {
+      setLoadingScores(false);
+    }
+  };
+
+  const fetchStandings = async (seasonParam = standingsSeason) => {
+    setLoadingStandings(true);
+    try {
+      const res = await fetch(`/api/season?type=standings&season=${encodeURIComponent(seasonParam)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStandingsData({
+          divisions: Array.isArray(data?.divisions) ? data.divisions : [],
+          wildCard: Array.isArray(data?.wildCard) ? data.wildCard : [],
+        });
+      }
+    } catch {
+      setStandingsData({ divisions: [], wildCard: [] });
+    } finally {
+      setLoadingStandings(false);
+    }
+  };
+
+  const fetchLeaders = async (seasonParam = leadersSeason) => {
+    setLoadingLeaders(true);
+    try {
+      const res = await fetch(`/api/season?type=leaders&season=${encodeURIComponent(seasonParam)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLeadersData({
+          hitting: Array.isArray(data?.hitting) ? data.hitting : [],
+          pitching: Array.isArray(data?.pitching) ? data.pitching : [],
+        });
+      }
+    } catch {
+      setLeadersData({ hitting: [], pitching: [] });
+    } finally {
+      setLoadingLeaders(false);
     }
   };
 
@@ -223,6 +311,24 @@ export default function App() {
   useEffect(() => {
     fetchFreeAgents(selectedStatYear);
   }, [selectedStatYear]);
+
+  useEffect(() => {
+    if (activeTab === 'scoresStandings') {
+      fetchScores(scoreDate);
+    }
+  }, [activeTab, scoreDate]);
+
+  useEffect(() => {
+    if (activeTab === 'scoresStandings') {
+      fetchStandings(standingsSeason);
+    }
+  }, [activeTab, standingsSeason]);
+
+  useEffect(() => {
+    if (activeTab === 'leaders') {
+      fetchLeaders(leadersSeason);
+    }
+  }, [activeTab, leadersSeason]);
 
   const handleSyncNow = async (force = false, silent = false) => {
     setSyncing(true);
@@ -289,7 +395,6 @@ export default function App() {
       }
     });
 
-    // Fixed tie-breaker: Dollars -> Total Moves -> Signings
     return Object.values(totals).sort(
       (a, b) =>
         b.totalMillions - a.totalMillions ||
@@ -497,7 +602,7 @@ export default function App() {
     <div className="min-h-screen pb-20 md:pb-12 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center text-white shadow">
               <Flame className="w-5 h-5" />
             </div>
@@ -507,7 +612,7 @@ export default function App() {
                   HOT STOVE TRACKER
                 </h1>
                 <span
-                  className={`hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  className={`hidden xl:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                     isSupabaseConfigured
                       ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                       : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
@@ -518,22 +623,24 @@ export default function App() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
-                Official MLB Transactions &amp; Multi-Year Stats • Synced: {formatMinutesAgo(lastSyncedAt)}
+                Year-Round MLB Dashboard • Synced: {formatMinutesAgo(lastSyncedAt)}
               </p>
             </div>
           </div>
 
-          <nav className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
+          <nav className="hidden lg:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
             {[
               { id: 'feed', label: 'Live Feed' },
               { id: 'freeAgents', label: `Free Agents (${freeAgents.length})` },
+              { id: 'scoresStandings', label: 'Scores & Standings' },
+              { id: 'leaders', label: 'League Leaders' },
               { id: 'teamHub', label: 'Team Hub' },
               { id: 'leaderboard', label: 'Spending' },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold transition whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
                     : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -544,7 +651,7 @@ export default function App() {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => handleSyncNow(true)}
               disabled={syncing}
@@ -607,7 +714,6 @@ export default function App() {
 
         {activeTab === 'feed' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Main Feed Column */}
             <div className="lg:col-span-8 xl:col-span-9 space-y-4">
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 shadow-sm">
                 <div className="flex flex-wrap items-center gap-2">
@@ -622,7 +728,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Quick One-Click My Teams Toggle */}
                   <button
                     onClick={toggleMyTeamsQuickFilter}
                     className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition ${
@@ -797,9 +902,6 @@ export default function App() {
                 <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3 bg-white dark:bg-slate-900">
                   <p className="font-bold text-base text-slate-700 dark:text-slate-200">
                     No MLB transactions in your database yet
-                  </p>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Click the button below to pull live MLB Trade Rumors reports and official 30-team MLB Stats API transactions into Supabase.
                   </p>
                   <button
                     onClick={() => handleSyncNow(true)}
@@ -1068,7 +1170,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Right Desktop Summary Sidebar */}
             <aside className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-4 sticky top-20">
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
                 <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">
@@ -1192,7 +1293,6 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Season Year Selector */}
                 <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
                   {STAT_YEARS.map((yr) => (
                     <button
@@ -1303,6 +1403,422 @@ export default function App() {
                       >
                         {fa.tier}
                       </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* NEW TAB: Scores & Standings */}
+        {activeTab === 'scoresStandings' && (
+          <div className="space-y-6">
+            {/* Live Scoreboard Section */}
+            <div className="space-y-3">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-extrabold flex items-center gap-2">
+                    <Calendar className="w-5 h-5 text-sky-500" />
+                    <span>MLB Scoreboard &amp; Schedule</span>
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Spring Training, Regular Season &amp; Postseason scores with probable pitchers and decisions
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setScoreDate((d) => shiftDateStr(d, -1))}
+                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                    title="Previous Day"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="date"
+                    value={scoreDate}
+                    onChange={(e) => e.target.value && setScoreDate(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                  />
+                  <button
+                    onClick={() => setScoreDate((d) => shiftDateStr(d, 1))}
+                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                    title="Next Day"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setScoreDate(new Date().toISOString().slice(0, 10))}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-600 text-white hover:bg-sky-500"
+                  >
+                    Today
+                  </button>
+                </div>
+              </div>
+
+              {loadingScores ? (
+                <div className="text-center py-10 text-sm text-slate-400">Loading MLB schedule...</div>
+              ) : games.length === 0 ? (
+                <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-1">
+                  <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                    No MLB games scheduled for {scoreDate}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Use the date picker above to jump to Spring Training, Opening Day, or any past game date.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+                  {games.map((g) => {
+                    const awayInfo = getTeamInfo(g.away.abbr);
+                    const homeInfo = getTeamInfo(g.home.abbr);
+                    const isLive = g.abstractState === 'Live';
+                    const isFinal = g.abstractState === 'Final';
+                    const awayWon = isFinal && (g.away.score ?? 0) > (g.home.score ?? 0);
+                    const homeWon = isFinal && (g.home.score ?? 0) > (g.away.score ?? 0);
+                    const startTime = g.gameDate
+                      ? new Date(g.gameDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : g.status;
+
+                    return (
+                      <div
+                        key={g.gamePk}
+                        className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3"
+                      >
+                        <div className="flex items-center justify-between text-[11px] font-bold">
+                          <span
+                            className={`px-2 py-0.5 rounded-full ${
+                              isLive
+                                ? 'bg-rose-500/15 text-rose-500'
+                                : isFinal
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                                : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                            }`}
+                          >
+                            {isLive && g.inning ? `${g.inningHalf || ''} ${g.inning}` : isFinal ? g.status : startTime}
+                          </span>
+                          <span className="text-slate-400 truncate max-w-[170px]">{g.venue}</span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {[
+                            { side: g.away, info: awayInfo, won: awayWon },
+                            { side: g.home, info: homeInfo, won: homeWon },
+                          ].map(({ side, info, won }, idx) => (
+                            <div key={idx} className="flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={() => openTeamHub(info.abbr)}
+                                className="flex items-center gap-2.5 text-left hover:opacity-85"
+                              >
+                                <span
+                                  className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
+                                  style={{ backgroundColor: info.color }}
+                                >
+                                  {info.abbr}
+                                </span>
+                                <div>
+                                  <div className={`text-sm font-bold ${won ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'}`}>
+                                    {info.short}
+                                  </div>
+                                  {side.wins !== null && (
+                                    <div className="text-[10px] text-slate-400">
+                                      ({side.wins}-{side.losses})
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
+                              <div className={`text-lg font-black ${won ? 'text-sky-500' : 'text-slate-400'}`}>
+                                {side.score !== null ? side.score : '—'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 truncate">
+                          {isFinal && g.decisions?.winner ? (
+                            <span>
+                              W: <strong className="text-slate-700 dark:text-slate-200">{g.decisions.winner}</strong>
+                              {g.decisions.loser && ` • L: ${g.decisions.loser}`}
+                              {g.decisions.save && ` • SV: ${g.decisions.save}`}
+                            </span>
+                          ) : (g.away.probablePitcher || g.home.probablePitcher) ? (
+                            <span>
+                              Probables: {g.away.probablePitcher || 'TBD'} vs {g.home.probablePitcher || 'TBD'}
+                            </span>
+                          ) : (
+                            <span>{g.status}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Standings Section */}
+            <div className="space-y-3">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-extrabold">MLB Standings</h2>
+                  <p className="text-xs text-slate-500">
+                    Regular-season Division &amp; Wild Card standings ({standingsSeason})
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    {[
+                      { id: 'divisions', label: 'Divisions' },
+                      { id: 'wildCard', label: 'Wild Card' },
+                    ].map((v) => (
+                      <button
+                        key={v.id}
+                        onClick={() => setStandingsView(v.id)}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                          standingsView === v.id
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    {SEASON_YEARS.map((yr) => (
+                      <button
+                        key={yr}
+                        onClick={() => setStandingsSeason(yr)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                          standingsSeason === yr
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {yr}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {loadingStandings ? (
+                <div className="text-center py-12 text-sm text-slate-400">Loading {standingsSeason} MLB standings...</div>
+              ) : (
+                <div className={`grid grid-cols-1 ${standingsView === 'wildCard' ? 'lg:grid-cols-2' : 'lg:grid-cols-2 xl:grid-cols-3'} gap-4`}>
+                  {(standingsView === 'wildCard' ? standingsData.wildCard : standingsData.divisions).map((group, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
+                    >
+                      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-950/60">
+                        <h3 className="font-extrabold text-sm">
+                          {group.divisionName || group.leagueName}
+                        </h3>
+                        <span className="text-[11px] font-bold text-slate-400">{standingsSeason}</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left">
+                          <thead>
+                            <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 uppercase">
+                              <th className="py-2 pl-4 pr-2 font-bold">Team</th>
+                              <th className="py-2 px-1.5 font-bold text-right">W</th>
+                              <th className="py-2 px-1.5 font-bold text-right">L</th>
+                              <th className="py-2 px-1.5 font-bold text-right">PCT</th>
+                              <th className="py-2 px-1.5 font-bold text-right">GB</th>
+                              <th className="py-2 px-1.5 font-bold text-right">L10</th>
+                              <th className="py-2 pr-4 pl-1.5 font-bold text-right">DIFF</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                            {(group.teams || []).map((t, tIdx) => {
+                              const tInfo = getTeamInfo(t.abbr);
+                              const isWcCutoff = standingsView === 'wildCard' && tIdx === 2;
+                              return (
+                                <tr
+                                  key={t.abbr}
+                                  onClick={() => openTeamHub(t.abbr)}
+                                  className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition ${
+                                    isWcCutoff ? 'border-b-2 border-b-sky-500/60' : ''
+                                  }`}
+                                >
+                                  <td className="py-2.5 pl-4 pr-2 font-bold flex items-center gap-2">
+                                    <span
+                                      className="w-8 text-center py-0.5 rounded text-[10px] font-black text-white shrink-0"
+                                      style={{ backgroundColor: tInfo.color }}
+                                    >
+                                      {tInfo.abbr}
+                                    </span>
+                                    <span className="truncate">{tInfo.short}</span>
+                                    {t.clinchIndicator && (
+                                      <span className="text-[10px] font-black px-1.5 rounded bg-emerald-500/15 text-emerald-500">
+                                        {t.clinchIndicator}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-1.5 text-right font-bold">{t.wins}</td>
+                                  <td className="py-2.5 px-1.5 text-right text-slate-500">{t.losses}</td>
+                                  <td className="py-2.5 px-1.5 text-right font-semibold">{t.pct}</td>
+                                  <td className="py-2.5 px-1.5 text-right text-slate-400">
+                                    {standingsView === 'wildCard' ? t.wcGb : t.gb}
+                                  </td>
+                                  <td className="py-2.5 px-1.5 text-right text-slate-400">{t.lastTen}</td>
+                                  <td
+                                    className={`py-2.5 pr-4 pl-1.5 text-right font-bold ${
+                                      t.runDiff > 0
+                                        ? 'text-emerald-500'
+                                        : t.runDiff < 0
+                                        ? 'text-rose-500'
+                                        : 'text-slate-400'
+                                    }`}
+                                  >
+                                    {t.runDiff > 0 ? `+${t.runDiff}` : t.runDiff}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* NEW TAB: League Leaders */}
+        {activeTab === 'leaders' && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-extrabold flex items-center gap-2">
+                  <Award className="w-5 h-5 text-amber-400" />
+                  <span>MLB League Leaders ({leadersSeason})</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Official MLB Stats API top-10 leaderboards • Click any player for full career stats
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                  {[
+                    { id: 'hitting', label: 'Hitting' },
+                    { id: 'pitching', label: 'Pitching' },
+                  ].map((grp) => (
+                    <button
+                      key={grp.id}
+                      onClick={() => setLeadersGroup(grp.id)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                        leadersGroup === grp.id
+                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      {grp.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                  {SEASON_YEARS.map((yr) => (
+                    <button
+                      key={yr}
+                      onClick={() => setLeadersSeason(yr)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                        leadersSeason === yr
+                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      {yr}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {loadingLeaders ? (
+              <div className="text-center py-16 text-sm text-slate-400">
+                Loading {leadersSeason} MLB {leadersGroup} leaders...
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {(leadersData[leadersGroup] || []).map((board) => {
+                  const topPlayer = board.leaders?.[0];
+                  const topTeam = topPlayer ? getTeamInfo(topPlayer.teamAbbr) : null;
+                  return (
+                    <div
+                      key={board.category}
+                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm"
+                    >
+                      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between">
+                        <h3 className="font-extrabold text-sm">
+                          {LEADER_LABELS[board.category] || board.category}
+                        </h3>
+                        <span className="text-[11px] font-bold text-slate-400">{leadersSeason}</span>
+                      </div>
+
+                      {topPlayer && (
+                        <div
+                          onClick={() => openPlayerModal(topPlayer.playerId, topPlayer.fullName, topPlayer.teamAbbr)}
+                          className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-sky-500/5 hover:bg-sky-500/10 cursor-pointer transition"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <PlayerAvatar
+                              playerId={topPlayer.playerId}
+                              playerName={topPlayer.fullName}
+                              teamAbbr={topPlayer.teamAbbr}
+                            />
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-black uppercase text-amber-500">#1 Leader</div>
+                              <div className="font-extrabold text-sm truncate">{topPlayer.fullName}</div>
+                              <span
+                                className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                                style={{ backgroundColor: topTeam.color }}
+                              >
+                                {topTeam.abbr}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-2xl font-black text-sky-500 shrink-0">
+                            {topPlayer.value}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                        {(board.leaders || []).slice(1, 10).map((item, idx) => {
+                          const tInfo = getTeamInfo(item.teamAbbr);
+                          return (
+                            <div
+                              key={`${item.playerId}-${idx}`}
+                              onClick={() => openPlayerModal(item.playerId, item.fullName, item.teamAbbr)}
+                              className="px-4 py-2 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="w-5 font-bold text-slate-400">{item.rank}.</span>
+                                <span className="font-bold truncate">{item.fullName}</span>
+                                <span
+                                  className="px-1.5 py-0.2 rounded text-[10px] font-black text-white shrink-0"
+                                  style={{ backgroundColor: tInfo.color }}
+                                >
+                                  {tInfo.abbr}
+                                </span>
+                              </div>
+                              <span className="font-extrabold text-slate-700 dark:text-slate-200 ml-2">
+                                {item.value}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
@@ -1509,12 +2025,14 @@ export default function App() {
         )}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-4 py-2">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
         {[
           { id: 'feed', label: 'Feed', icon: Flame },
-          { id: 'freeAgents', label: 'Free Agents', icon: Users },
+          { id: 'freeAgents', label: 'Agents', icon: Users },
+          { id: 'scoresStandings', label: 'Scores', icon: Calendar },
+          { id: 'leaders', label: 'Leaders', icon: Award },
           { id: 'teamHub', label: 'Teams', icon: ArrowLeftRight },
-          { id: 'leaderboard', label: 'Spending', icon: Trophy },
+          { id: 'leaderboard', label: 'Spend', icon: Trophy },
         ].map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
@@ -1522,7 +2040,7 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-0.5 text-[11px] font-bold ${
+              className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${
                 active ? 'text-sky-500' : 'text-slate-400'
               }`}
             >
