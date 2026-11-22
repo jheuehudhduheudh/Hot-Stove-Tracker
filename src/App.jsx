@@ -4,7 +4,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
@@ -12,6 +12,21 @@ import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamP
 
 const FA_CLASS_YEARS = ['2026', '2025', '2024', '2023', '2022'];
 const SEASON_YEARS = ['2026', '2025', '2024', '2023', '2022'];
+
+const QUICK_JUMP_DATES = [
+  { label: '2026 WS G5 (MIL @ TB)', date: '2026-10-28' },
+  { label: '2026 WS G4 (12 Inn)', date: '2026-10-27' },
+  { label: 'July 4, 2026 Slate', date: '2026-07-04' },
+  { label: '2026 Opening Slate', date: '2026-03-28' },
+];
+
+function getInitialUrlParams() {
+  try {
+    return new URLSearchParams(window.location.search);
+  } catch {
+    return new URLSearchParams();
+  }
+}
 
 const LEADER_LABELS = {
   homeRuns: 'Home Runs (HR)',
@@ -141,7 +156,10 @@ export default function App() {
     }
   }, [darkMode]);
 
-  const [activeTab, setActiveTab] = useState('feed');
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = getInitialUrlParams().get('tab');
+    return ['feed', 'freeAgents', 'scoresStandings', 'leaders', 'teamHub', 'leaderboard'].includes(t) ? t : 'feed';
+  });
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
   const [sidebarFreeAgents, setSidebarFreeAgents] = useState([]);
@@ -163,7 +181,10 @@ export default function App() {
   const autoSyncTriggeredRef = useRef(false);
 
   // Scores & Standings state
-  const [scoreDate, setScoreDate] = useState(() => getLocalDateStr());
+  const [scoreDate, setScoreDate] = useState(() => {
+    const d = getInitialUrlParams().get('date');
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : getLocalDateStr();
+  });
   const [games, setGames] = useState([]);
   const [loadingScores, setLoadingScores] = useState(false);
   const [standingsSeason, setStandingsSeason] = useState('2026');
@@ -241,7 +262,10 @@ export default function App() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [faPositionFilter, setFaPositionFilter] = useState('ALL');
-  const [hubTeam, setHubTeam] = useState('TOR');
+  const [hubTeam, setHubTeam] = useState(() => {
+    const tm = (getInitialUrlParams().get('team') || '').toUpperCase();
+    return MLB_TEAMS.some((x) => x.abbr === tm) ? tm : 'TOR';
+  });
 
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
@@ -256,11 +280,16 @@ export default function App() {
   const [heroImgError, setHeroImgError] = useState(false);
   const profileReqIdRef = useRef(0);
 
-  // Live Box Score Modal state
+  // Live Box Score & Highlights Modal state
   const [selectedGamePk, setSelectedGamePk] = useState(null);
   const [boxScore, setBoxScore] = useState(null);
   const [loadingBoxScore, setLoadingBoxScore] = useState(false);
+  const [refreshingBoxScore, setRefreshingBoxScore] = useState(false);
   const [boxScoreTeamTab, setBoxScoreTeamTab] = useState('away');
+  const [activeHighlight, setActiveHighlight] = useState(null);
+  const [videoError, setVideoError] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const skipUrlSyncRef = useRef(false);
 
   const openTeamHub = (abbr) => {
     if (!abbr || abbr === 'MLB') return;
@@ -349,22 +378,42 @@ export default function App() {
     }
   };
 
-  const openBoxScore = async (gamePk) => {
+  const openBoxScore = async (gamePk, { silent = false, initialTab = null } = {}) => {
     if (!gamePk) return;
-    setSelectedGamePk(gamePk);
-    setBoxScore(null);
-    setBoxScoreTeamTab('away');
-    setLoadingBoxScore(true);
+    if (!silent) {
+      setSelectedGamePk(gamePk);
+      setBoxScore(null);
+      setActiveHighlight(null);
+      setVideoError(false);
+      setBoxScoreTeamTab(initialTab || 'away');
+      setLoadingBoxScore(true);
+    } else {
+      setRefreshingBoxScore(true);
+    }
     try {
       const res = await fetch(`/api/season?type=boxscore&gamePk=${gamePk}`);
       if (res.ok) {
         const data = await res.json();
         setBoxScore(data);
+        if (!silent && data?.highlights?.length > 0) {
+          setActiveHighlight(data.highlights[0]);
+        }
       }
     } catch {
-      setBoxScore(null);
+      if (!silent) setBoxScore(null);
     } finally {
       setLoadingBoxScore(false);
+      setRefreshingBoxScore(false);
+    }
+  };
+
+  const copyShareUrl = () => {
+    try {
+      navigator.clipboard?.writeText(window.location.href);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 1800);
+    } catch {
+      // Clipboard blocked
     }
   };
 
@@ -426,8 +475,8 @@ export default function App() {
     }
   };
 
-  const fetchScores = async (dateParam = scoreDate) => {
-    setLoadingScores(true);
+  const fetchScores = async (dateParam = scoreDate, silent = false) => {
+    if (!silent) setLoadingScores(true);
     try {
       const res = await fetch(`/api/season?type=scores&date=${encodeURIComponent(dateParam)}`);
       if (res.ok) {
@@ -435,9 +484,9 @@ export default function App() {
         setGames(Array.isArray(data?.games) ? data.games : []);
       }
     } catch {
-      setGames([]);
+      if (!silent) setGames([]);
     } finally {
-      setLoadingScores(false);
+      if (!silent) setLoadingScores(false);
     }
   };
 
@@ -480,6 +529,130 @@ export default function App() {
   useEffect(() => {
     fetchTransactions(true);
   }, []);
+
+  // Open direct-linked ?player= or ?game= on first load
+  useEffect(() => {
+    const params = getInitialUrlParams();
+    const pid = params.get('player');
+    const gpk = params.get('game');
+    if (pid && /^\d+$/.test(pid)) {
+      skipUrlSyncRef.current = true;
+      openPlayerModal(Number(pid), 'MLB Player', params.get('team') || 'MLB');
+    } else if (gpk && /^\d+$/.test(gpk)) {
+      skipUrlSyncRef.current = true;
+      openBoxScore(Number(gpk));
+    }
+  }, []);
+
+  // Keep URL query params synced for shareable links & real browser Back/Forward navigation
+  useEffect(() => {
+    if (skipUrlSyncRef.current) {
+      skipUrlSyncRef.current = false;
+      return;
+    }
+    const params = new URLSearchParams();
+    if (selectedPlayer?.playerId) {
+      params.set('player', String(selectedPlayer.playerId));
+    } else if (selectedGamePk) {
+      params.set('tab', 'scoresStandings');
+      params.set('date', scoreDate);
+      params.set('game', String(selectedGamePk));
+    } else {
+      if (activeTab !== 'feed') params.set('tab', activeTab);
+      if (activeTab === 'teamHub') params.set('team', hubTeam);
+      if (activeTab === 'scoresStandings') params.set('date', scoreDate);
+    }
+    const nextSearch = params.toString() ? `?${params.toString()}` : window.location.pathname;
+    const currentFull = window.location.search || window.location.pathname;
+    if (nextSearch !== currentFull) {
+      window.history.pushState({}, '', nextSearch);
+    }
+  }, [activeTab, hubTeam, scoreDate, selectedPlayer?.playerId, selectedGamePk]);
+
+  // Respond to browser Back / Forward buttons
+  useEffect(() => {
+    const onPopState = () => {
+      skipUrlSyncRef.current = true;
+      const params = getInitialUrlParams();
+      const pid = params.get('player');
+      const gpk = params.get('game');
+      const tab = params.get('tab');
+      const tm = (params.get('team') || '').toUpperCase();
+      const dt = params.get('date');
+
+      if (tab && ['feed', 'freeAgents', 'scoresStandings', 'leaders', 'teamHub', 'leaderboard'].includes(tab)) {
+        setActiveTab(tab);
+      } else if (!pid && !gpk) {
+        setActiveTab('feed');
+      }
+      if (tm && MLB_TEAMS.some((x) => x.abbr === tm)) setHubTeam(tm);
+      if (dt && /^\d{4}-\d{2}-\d{2}$/.test(dt)) setScoreDate(dt);
+
+      if (pid && /^\d+$/.test(pid)) {
+        openPlayerModal(Number(pid), 'MLB Player', tm || 'MLB');
+      } else {
+        setSelectedPlayer(null);
+      }
+      if (gpk && /^\d+$/.test(gpk)) {
+        openBoxScore(Number(gpk));
+      } else {
+        setSelectedGamePk(null);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Keyboard Shortcuts: "/" or Cmd/Ctrl+K to open Search Player, "Esc" to close modals / exit profile
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable;
+
+      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !isTyping)) {
+        e.preventDefault();
+        setPlayerSearchOpen(true);
+        setGlobalPlayerQuery('');
+        setGlobalPlayerResults([]);
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (playerSearchOpen) {
+          setPlayerSearchOpen(false);
+        } else if (selectedGamePk) {
+          setSelectedGamePk(null);
+        } else if (mobileFilterOpen) {
+          setMobileFilterOpen(false);
+        } else if (teamMenuOpen) {
+          setTeamMenuOpen(false);
+        } else if (selectedPlayer) {
+          setSelectedPlayer(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer]);
+
+  // Smart 30-second Live Auto-Polling for Scoreboard (only runs if at least 1 game is Live)
+  const hasLiveGames = useMemo(() => games.some((g) => g.abstractState === 'Live'), [games]);
+  useEffect(() => {
+    if (activeTab !== 'scoresStandings' || !hasLiveGames) return;
+    const id = setInterval(() => {
+      fetchScores(scoreDate, true);
+    }, 30000);
+    return () => clearInterval(id);
+  }, [activeTab, hasLiveGames, scoreDate]);
+
+  // Smart 30-second Live Auto-Polling for Open Box Score Modal (only while game is Live)
+  useEffect(() => {
+    if (!selectedGamePk || boxScore?.abstractState !== 'Live') return;
+    const id = setInterval(() => {
+      openBoxScore(selectedGamePk, { silent: true });
+    }, 30000);
+    return () => clearInterval(id);
+  }, [selectedGamePk, boxScore?.abstractState]);
 
   useEffect(() => {
     fetchFreeAgents(selectedFaClass, faStatMode);
@@ -837,6 +1010,7 @@ export default function App() {
             >
               <Search className="w-3.5 h-3.5 text-sky-500" />
               <span className="hidden sm:inline">Search Player</span>
+              <kbd className="hidden xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300">/</kbd>
             </button>
 
             <button
@@ -926,6 +1100,14 @@ export default function App() {
                 </button>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={copyShareUrl}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-500 transition"
+                    title="Copy direct link to this player profile"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
+                    <span>{copiedLink ? 'Copied!' : 'Share'}</span>
+                  </button>
                   {playerStats?.isTwoWay && (
                     <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                       {[
@@ -2410,6 +2592,12 @@ export default function App() {
                   <h2 className="text-xl font-extrabold flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-sky-500" />
                     <span>MLB Scoreboard &amp; Schedule</span>
+                    {hasLiveGames && (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-500">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        LIVE AUTO-REFRESH
+                      </span>
+                    )}
                   </h2>
                   <p className="text-xs text-slate-500">
                     Spring Training, Regular Season &amp; Postseason scores with probable pitchers and decisions
@@ -2449,13 +2637,26 @@ export default function App() {
               {loadingScores ? (
                 <div className="text-center py-10 text-sm text-slate-400">Loading MLB schedule...</div>
               ) : games.length === 0 ? (
-                <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-1">
-                  <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
-                    No MLB games scheduled for {scoreDate}
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Use the date picker above to jump to Spring Training, Opening Day, or any past game date.
-                  </p>
+                <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 text-center space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                      No MLB games scheduled for {scoreDate}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      Jump to a recent 2026 showcase date to inspect Box Scores, Scoring Plays &amp; Official Video Highlights:
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {QUICK_JUMP_DATES.map((q) => (
+                      <button
+                        key={q.date}
+                        onClick={() => setScoreDate(q.date)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-sky-600 hover:text-white transition"
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
@@ -2546,7 +2747,7 @@ export default function App() {
                             )}
                           </div>
                           <span className="text-[10px] font-extrabold text-sky-500 group-hover:underline shrink-0">
-                            Box Score →
+                            Box Score & Highlights →
                           </span>
                         </div>
                       </div>
@@ -3621,39 +3822,67 @@ export default function App() {
         </div>
       )}
 
-      {/* Clickable Live MLB Box Score Modal */}
+      {/* Clickable Live MLB Box Score, Scoring Plays & Embedded Highlights Modal */}
       {selectedGamePk && (
         <div
           className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5"
           onClick={() => setSelectedGamePk(null)}
         >
           <div
-            className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
+            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-10 px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base sm:text-lg font-black">
-                  {boxScore ? `${boxScore.away.abbr} @ ${boxScore.home.abbr} — Box Score` : 'Loading MLB Box Score...'}
-                </h3>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base sm:text-lg font-black truncate">
+                    {boxScore ? `${boxScore.away.abbr} @ ${boxScore.home.abbr} — Box Score` : 'Loading MLB Box Score...'}
+                  </h3>
+                  {boxScore?.abstractState === 'Live' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-500 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      LIVE
+                    </span>
+                  )}
+                </div>
                 {boxScore && (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 truncate">
                     {boxScore.status}{boxScore.venue ? ` • ${boxScore.venue}` : ''}
                   </p>
                 )}
               </div>
-              <button
-                onClick={() => setSelectedGamePk(null)}
-                className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => openBoxScore(selectedGamePk, { silent: true })}
+                  disabled={refreshingBoxScore || loadingBoxScore}
+                  title="Refresh Box Score & Highlights"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 disabled:opacity-50 transition"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-sky-500 ${refreshingBoxScore ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+                <button
+                  onClick={copyShareUrl}
+                  title="Copy direct link to this game"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 transition"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Share2 className="w-3.5 h-3.5 text-sky-500" />}
+                  <span className="hidden sm:inline">{copiedLink ? 'Copied!' : 'Share'}</span>
+                </button>
+                <button
+                  onClick={() => setSelectedGamePk(null)}
+                  className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+                  title="Close (Esc)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-5 space-y-5">
               {loadingBoxScore ? (
                 <div className="py-12 text-center text-sm text-slate-400">
-                  Fetching live MLB box score &amp; inning-by-inning linescore...
+                  Fetching live MLB box score, scoring plays &amp; official video highlights...
                 </div>
               ) : !boxScore ? (
                 <div className="py-12 text-center text-sm text-slate-400">
@@ -3667,6 +3896,9 @@ export default function App() {
                 const activeSideInfo = boxScoreTeamTab === 'home' ? homeInfo : awayInfo;
                 const inningCount = Math.max(9, ls.innings?.length || 0);
                 const inningNums = Array.from({ length: inningCount }, (_, i) => i + 1);
+                const highlightsList = boxScore.highlights || [];
+                const scoringList = boxScore.scoringPlays || [];
+                const featuredRecap = highlightsList.find((h) => h.isRecap) || highlightsList[0] || null;
 
                 return (
                   <>
@@ -3725,6 +3957,34 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Quick Watch Highlights Callout Banner (when highlights exist & not already on Highlights tab) */}
+                    {featuredRecap && boxScoreTeamTab !== 'highlights' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveHighlight(featuredRecap);
+                          setVideoError(false);
+                          setBoxScoreTeamTab('highlights');
+                        }}
+                        className="w-full p-3 rounded-2xl border border-rose-500/25 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-sky-500/10 hover:border-rose-500/50 flex items-center justify-between gap-3 text-left transition"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow">
+                            <Play className="w-4 h-4 fill-current ml-0.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-black uppercase text-rose-500">
+                              {featuredRecap.isRecap ? 'Official Game Recap & Highlights Ready' : `${highlightsList.length} Official MLB Video Highlights`}
+                            </div>
+                            <div className="text-xs sm:text-sm font-bold truncate">{featuredRecap.headline}</div>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 rounded-xl text-xs font-extrabold bg-rose-600 text-white shrink-0">
+                          Watch ({highlightsList.length})
+                        </span>
+                      </button>
+                    )}
+
                     {/* Inning-by-Inning Linescore */}
                     {ls.innings?.length > 0 && (
                       <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
@@ -3766,11 +4026,13 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Away / Home Team Box Score Switcher */}
-                    <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
+                    {/* Modal Sub-Tabs: Away | Home | Scoring Plays | Highlights */}
+                    <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
                       {[
                         { id: 'away', label: `${awayInfo.short} Box Score` },
                         { id: 'home', label: `${homeInfo.short} Box Score` },
+                        { id: 'scoring', label: `Scoring Plays (${scoringList.length})` },
+                        { id: 'highlights', label: `Highlights (${highlightsList.length})` },
                       ].map((t) => (
                         <button
                           key={t.id}
@@ -3786,123 +4048,289 @@ export default function App() {
                       ))}
                     </div>
 
-                    {/* Batting Table */}
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                        {activeSideInfo.name} Batting (Click any player for full profile)
-                      </h4>
-                      {activeSide.batters.length === 0 ? (
-                        <p className="text-xs text-slate-400">Lineup / batting stats not posted yet.</p>
-                      ) : (
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-                          <table className="w-full text-xs text-left border-collapse">
-                            <thead>
-                              <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
-                                <th className="py-2 pl-3 pr-2 font-bold">Batter</th>
-                                <th className="py-2 px-2 font-bold text-right">AB</th>
-                                <th className="py-2 px-2 font-bold text-right">R</th>
-                                <th className="py-2 px-2 font-bold text-right">H</th>
-                                <th className="py-2 px-2 font-bold text-right">RBI</th>
-                                <th className="py-2 px-2 font-bold text-right">BB</th>
-                                <th className="py-2 px-2 font-bold text-right">SO</th>
-                                <th className="py-2 px-2 font-bold text-right">AVG</th>
-                                <th className="py-2 pr-3 pl-2 font-bold text-right">OPS</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                              {activeSide.batters.map((b, i) => (
-                                <tr
-                                  key={`${b.playerId}-${i}`}
-                                  onClick={() => openPlayerModal(b.playerId, b.fullName, activeSideInfo.abbr)}
-                                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
-                                >
-                                  <td className={`py-2 pl-3 pr-2 font-bold ${b.isSub ? 'pl-6 text-slate-500' : ''}`}>
-                                    <span className="hover:text-sky-500">{b.fullName}</span>
-                                    <span className="ml-1.5 text-[10px] text-slate-400 font-semibold">{b.position}</span>
-                                    {b.hr > 0 && (
-                                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">
-                                        {b.hr > 1 ? `${b.hr} HR` : 'HR'}
-                                      </span>
+                    {/* TAB: EMBEDDED VIDEO HIGHLIGHTS */}
+                    {boxScoreTeamTab === 'highlights' ? (
+                      <div className="space-y-4">
+                        {highlightsList.length === 0 ? (
+                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                            No official MLB highlight clips are published for this game yet (clips appear as big plays happen and full recaps post shortly after the final out).
+                          </div>
+                        ) : (
+                          <>
+                            {(() => {
+                              const currentClip = activeHighlight || highlightsList[0];
+                              return (
+                                <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-950">
+                                  {currentClip.videoUrl && !videoError ? (
+                                    <video
+                                      key={currentClip.id}
+                                      src={currentClip.videoUrl}
+                                      poster={currentClip.thumbnail || undefined}
+                                      controls
+                                      playsInline
+                                      onError={() => setVideoError(true)}
+                                      className="w-full aspect-video bg-black"
+                                    />
+                                  ) : (
+                                    <div className="aspect-video flex flex-col items-center justify-center p-6 text-center space-y-3 bg-slate-950 text-slate-300">
+                                      <p className="text-xs text-slate-400">
+                                        Direct MP4 playback is unavailable for this clip in your browser.
+                                      </p>
+                                      {currentClip.mlbUrl && (
+                                        <a
+                                          href={currentClip.mlbUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold"
+                                        >
+                                          Watch on MLB.com <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="p-4 bg-white dark:bg-slate-900 flex flex-wrap items-start justify-between gap-3">
+                                    <div className="space-y-1 min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        {currentClip.isRecap && (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-500">
+                                            RECAP / CONDENSED
+                                          </span>
+                                        )}
+                                        {currentClip.duration && (
+                                          <span className="text-[11px] font-bold text-slate-400">{currentClip.duration}</span>
+                                        )}
+                                      </div>
+                                      <h4 className="font-extrabold text-sm sm:text-base">{currentClip.headline}</h4>
+                                      {currentClip.blurb && (
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">{currentClip.blurb}</p>
+                                      )}
+                                    </div>
+                                    {currentClip.mlbUrl && (
+                                      <a
+                                        href={currentClip.mlbUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:text-sky-500 shrink-0"
+                                      >
+                                        MLB.com <ExternalLink className="w-3 h-3" />
+                                      </a>
                                     )}
-                                  </td>
-                                  <td className="py-2 px-2 text-right">{b.ab}</td>
-                                  <td className="py-2 px-2 text-right">{b.r}</td>
-                                  <td className="py-2 px-2 text-right font-bold">{b.h}</td>
-                                  <td className="py-2 px-2 text-right">{b.rbi}</td>
-                                  <td className="py-2 px-2 text-right">{b.bb}</td>
-                                  <td className="py-2 px-2 text-right">{b.so}</td>
-                                  <td className="py-2 px-2 text-right text-slate-500">{b.avg}</td>
-                                  <td className="py-2 pr-3 pl-2 text-right text-slate-500">{b.ops}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                      {activeSide.battingNotes?.length > 0 && (
-                        <div className="text-[11px] text-slate-500 space-y-0.5 pt-1">
-                          {activeSide.battingNotes.map((n, i) => (
-                            <div key={i}>
-                              <strong className="text-slate-700 dark:text-slate-300">{n.label}:</strong> {n.value}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
-                    {/* Pitching Table */}
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                        {activeSideInfo.name} Pitching
-                      </h4>
-                      {activeSide.pitchers.length === 0 ? (
-                        <p className="text-xs text-slate-400">Pitching lines not posted yet.</p>
-                      ) : (
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-                          <table className="w-full text-xs text-left border-collapse">
-                            <thead>
-                              <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
-                                <th className="py-2 pl-3 pr-2 font-bold">Pitcher</th>
-                                <th className="py-2 px-2 font-bold text-right">IP</th>
-                                <th className="py-2 px-2 font-bold text-right">H</th>
-                                <th className="py-2 px-2 font-bold text-right">R</th>
-                                <th className="py-2 px-2 font-bold text-right">ER</th>
-                                <th className="py-2 px-2 font-bold text-right">BB</th>
-                                <th className="py-2 px-2 font-bold text-right">SO</th>
-                                <th className="py-2 px-2 font-bold text-right">HR</th>
-                                <th className="py-2 px-2 font-bold text-right">P-S</th>
-                                <th className="py-2 pr-3 pl-2 font-bold text-right">ERA</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                              {activeSide.pitchers.map((p, i) => (
-                                <tr
-                                  key={`${p.playerId}-${i}`}
-                                  onClick={() => openPlayerModal(p.playerId, p.fullName, activeSideInfo.abbr)}
-                                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
-                                >
-                                  <td className="py-2 pl-3 pr-2 font-bold">
-                                    <span className="hover:text-sky-500">{p.fullName}</span>
-                                    {p.note && <span className="ml-1.5 text-[10px] text-sky-500 font-bold">{p.note}</span>}
-                                  </td>
-                                  <td className="py-2 px-2 text-right font-bold">{p.ip}</td>
-                                  <td className="py-2 px-2 text-right">{p.h}</td>
-                                  <td className="py-2 px-2 text-right">{p.r}</td>
-                                  <td className="py-2 px-2 text-right">{p.er}</td>
-                                  <td className="py-2 px-2 text-right">{p.bb}</td>
-                                  <td className="py-2 px-2 text-right font-bold">{p.so}</td>
-                                  <td className="py-2 px-2 text-right">{p.hr}</td>
-                                  <td className="py-2 px-2 text-right text-slate-500">
-                                    {p.pitches !== null ? `${p.pitches}-${p.strikes ?? 0}` : '—'}
-                                  </td>
-                                  <td className="py-2 pr-3 pl-2 text-right text-slate-500">{p.era}</td>
-                                </tr>
+                            {/* Clip Playlist Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {highlightsList.map((clip) => {
+                                const isSelected = (activeHighlight?.id || highlightsList[0]?.id) === clip.id;
+                                return (
+                                  <button
+                                    key={clip.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveHighlight(clip);
+                                      setVideoError(false);
+                                    }}
+                                    className={`rounded-xl overflow-hidden border text-left transition flex flex-col ${
+                                      isSelected
+                                        ? 'border-sky-500 ring-2 ring-sky-500/30 bg-sky-500/5'
+                                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-slate-400'
+                                    }`}
+                                  >
+                                    <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
+                                      {clip.thumbnail ? (
+                                        <img
+                                          src={clip.thumbnail}
+                                          alt={clip.headline}
+                                          loading="lazy"
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                          <Play className="w-8 h-8" />
+                                        </div>
+                                      )}
+                                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                                      <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white">
+                                        {clip.duration || 'CLIP'}
+                                      </div>
+                                      {clip.isRecap && (
+                                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-rose-600 text-[9px] font-black text-white">
+                                          RECAP
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="p-2.5 text-xs font-bold line-clamp-2">
+                                      {clip.headline}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ) : boxScoreTeamTab === 'scoring' ? (
+                      /* TAB: SCORING PLAYS LOG */
+                      <div className="space-y-2.5">
+                        {scoringList.length === 0 ? (
+                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                            No scoring plays recorded yet.
+                          </div>
+                        ) : (
+                          scoringList.map((sp, i) => (
+                            <div
+                              key={`${sp.atBatIndex}-${i}`}
+                              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-start justify-between gap-3"
+                            >
+                              <div className="space-y-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                                    {sp.half} {sp.inning}
+                                  </span>
+                                  <span className="text-xs font-extrabold">{sp.event}</span>
+                                  {sp.batterId && sp.batterName && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openPlayerModal(sp.batterId, sp.batterName, 'MLB')}
+                                      className="text-[11px] font-bold text-sky-500 hover:underline"
+                                    >
+                                      {sp.batterName}
+                                    </button>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                                  {sp.description}
+                                </p>
+                              </div>
+                              <div className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-black shrink-0 text-center">
+                                {awayInfo.abbr} {sp.awayScore ?? 0} – {homeInfo.abbr} {sp.homeScore ?? 0}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ) : (
+                      /* TAB: AWAY / HOME BATTING & PITCHING BOX SCORE */
+                      <>
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                            {activeSideInfo.name} Batting (Click any player for full profile)
+                          </h4>
+                          {activeSide.batters.length === 0 ? (
+                            <p className="text-xs text-slate-400">Lineup / batting stats not posted yet.</p>
+                          ) : (
+                            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                              <table className="w-full text-xs text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
+                                    <th className="py-2 pl-3 pr-2 font-bold">Batter</th>
+                                    <th className="py-2 px-2 font-bold text-right">AB</th>
+                                    <th className="py-2 px-2 font-bold text-right">R</th>
+                                    <th className="py-2 px-2 font-bold text-right">H</th>
+                                    <th className="py-2 px-2 font-bold text-right">RBI</th>
+                                    <th className="py-2 px-2 font-bold text-right">BB</th>
+                                    <th className="py-2 px-2 font-bold text-right">SO</th>
+                                    <th className="py-2 px-2 font-bold text-right">AVG</th>
+                                    <th className="py-2 pr-3 pl-2 font-bold text-right">OPS</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                  {activeSide.batters.map((b, i) => (
+                                    <tr
+                                      key={`${b.playerId}-${i}`}
+                                      onClick={() => openPlayerModal(b.playerId, b.fullName, activeSideInfo.abbr)}
+                                      className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                                    >
+                                      <td className={`py-2 pl-3 pr-2 font-bold ${b.isSub ? 'pl-6 text-slate-500' : ''}`}>
+                                        <span className="hover:text-sky-500">{b.fullName}</span>
+                                        <span className="ml-1.5 text-[10px] text-slate-400 font-semibold">{b.position}</span>
+                                        {b.hr > 0 && (
+                                          <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">
+                                            {b.hr > 1 ? `${b.hr} HR` : 'HR'}
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-2 text-right">{b.ab}</td>
+                                      <td className="py-2 px-2 text-right">{b.r}</td>
+                                      <td className="py-2 px-2 text-right font-bold">{b.h}</td>
+                                      <td className="py-2 px-2 text-right">{b.rbi}</td>
+                                      <td className="py-2 px-2 text-right">{b.bb}</td>
+                                      <td className="py-2 px-2 text-right">{b.so}</td>
+                                      <td className="py-2 px-2 text-right text-slate-500">{b.avg}</td>
+                                      <td className="py-2 pr-3 pl-2 text-right text-slate-500">{b.ops}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {activeSide.battingNotes?.length > 0 && (
+                            <div className="text-[11px] text-slate-500 space-y-0.5 pt-1">
+                              {activeSide.battingNotes.map((n, i) => (
+                                <div key={i}>
+                                  <strong className="text-slate-700 dark:text-slate-300">{n.label}:</strong> {n.value}
+                                </div>
                               ))}
-                            </tbody>
-                          </table>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+                            {activeSideInfo.name} Pitching
+                          </h4>
+                          {activeSide.pitchers.length === 0 ? (
+                            <p className="text-xs text-slate-400">Pitching lines not posted yet.</p>
+                          ) : (
+                            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                              <table className="w-full text-xs text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase">
+                                    <th className="py-2 pl-3 pr-2 font-bold">Pitcher</th>
+                                    <th className="py-2 px-2 font-bold text-right">IP</th>
+                                    <th className="py-2 px-2 font-bold text-right">H</th>
+                                    <th className="py-2 px-2 font-bold text-right">R</th>
+                                    <th className="py-2 px-2 font-bold text-right">ER</th>
+                                    <th className="py-2 px-2 font-bold text-right">BB</th>
+                                    <th className="py-2 px-2 font-bold text-right">SO</th>
+                                    <th className="py-2 px-2 font-bold text-right">HR</th>
+                                    <th className="py-2 px-2 font-bold text-right">P-S</th>
+                                    <th className="py-2 pr-3 pl-2 font-bold text-right">ERA</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                  {activeSide.pitchers.map((p, i) => (
+                                    <tr
+                                      key={`${p.playerId}-${i}`}
+                                      onClick={() => openPlayerModal(p.playerId, p.fullName, activeSideInfo.abbr)}
+                                      className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                                    >
+                                      <td className="py-2 pl-3 pr-2 font-bold">
+                                        <span className="hover:text-sky-500">{p.fullName}</span>
+                                        {p.note && <span className="ml-1.5 text-[10px] text-sky-500 font-bold">{p.note}</span>}
+                                      </td>
+                                      <td className="py-2 px-2 text-right font-bold">{p.ip}</td>
+                                      <td className="py-2 px-2 text-right">{p.h}</td>
+                                      <td className="py-2 px-2 text-right">{p.r}</td>
+                                      <td className="py-2 px-2 text-right">{p.er}</td>
+                                      <td className="py-2 px-2 text-right">{p.bb}</td>
+                                      <td className="py-2 px-2 text-right font-bold">{p.so}</td>
+                                      <td className="py-2 px-2 text-right">{p.hr}</td>
+                                      <td className="py-2 px-2 text-right text-slate-500">
+                                        {p.pitches !== null ? `${p.pitches}-${p.strikes ?? 0}` : '—'}
+                                      </td>
+                                      <td className="py-2 pr-3 pl-2 text-right text-slate-500">{p.era}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
 
                     {boxScore.gameInfo?.length > 0 && (
                       <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
