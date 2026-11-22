@@ -285,6 +285,107 @@ async function handleRoster(req, res) {
 }
 
 
+function pickThumbnail(imageObj) {
+  if (!imageObj) return null;
+  const cuts = Array.isArray(imageObj.cuts)
+    ? imageObj.cuts
+    : imageObj.cuts && typeof imageObj.cuts === 'object'
+    ? Object.values(imageObj.cuts)
+    : [];
+  if (cuts.length === 0) return null;
+  // Prefer a crisp 16:9 medium thumbnail (~640px wide)
+  const preferred =
+    cuts.find((c) => Number(c?.width) >= 600 && Number(c?.width) <= 960 && c?.src) ||
+    cuts.find((c) => Number(c?.width) >= 400 && c?.src) ||
+    cuts.find((c) => c?.src);
+  return preferred?.src || null;
+}
+
+function pickMp4Playback(playbacks) {
+  if (!Array.isArray(playbacks)) return null;
+  const mp4Avc = playbacks.find((p) => p?.name === 'mp4Avc' && p?.url);
+  if (mp4Avc) return mp4Avc.url;
+  const highBit = playbacks.find((p) => p?.name === 'highBit' && p?.url && /\.mp4/i.test(p.url));
+  if (highBit) return highBit.url;
+  const anyMp4 = playbacks.find((p) => p?.url && /\.mp4(\?|$)/i.test(p.url));
+  if (anyMp4) return anyMp4.url;
+  return null;
+}
+
+function parseHighlights(contentData) {
+  const rawItems = [
+    ...(contentData?.highlights?.highlights?.items || []),
+  ];
+
+  // Also check editorial MLB recap media if present
+  const recapMedia = contentData?.editorial?.recap?.mlb?.media;
+  if (recapMedia && recapMedia.playbacks) {
+    rawItems.unshift(recapMedia);
+  }
+
+  const seen = new Set();
+  const list = [];
+
+  for (const item of rawItems) {
+    if (!item || (item.type && item.type !== 'video')) continue;
+    const headline = item.headline || item.title || '';
+    if (!headline) continue;
+    const key = item.id || item.guid || headline;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const videoUrl = pickMp4Playback(item.playbacks);
+    const mlbUrl = item.slug ? `https://www.mlb.com/video/${item.slug}` : null;
+    if (!videoUrl && !mlbUrl) continue;
+
+    const isRecap =
+      /\b(condensed\s+game|recap|highlights\s*[:|–-]|\bvs\.?\b.*\bhighlights\b)/i.test(headline) ||
+      (item.duration && /^00:(0[4-9]|[1-5]\d):/.test(String(item.duration)));
+
+    list.push({
+      id: String(key),
+      headline,
+      blurb: item.blurb || item.description || '',
+      duration: item.duration || '',
+      thumbnail: pickThumbnail(item.image),
+      videoUrl,
+      mlbUrl,
+      isRecap: Boolean(isRecap),
+    });
+  }
+
+  // Float full Game Recaps / Condensed Games to the top
+  list.sort((a, b) => Number(b.isRecap) - Number(a.isRecap));
+  return list.slice(0, 24);
+}
+
+function parseScoringPlays(pbpData) {
+  const allPlays = pbpData?.allPlays || [];
+  const indices = pbpData?.scoringPlays || [];
+  const out = [];
+
+  for (const idx of indices) {
+    const play = allPlays[idx];
+    if (!play) continue;
+    const about = play.about || {};
+    const result = play.result || {};
+    const batter = play.matchup?.batter || {};
+    out.push({
+      atBatIndex: about.atBatIndex ?? idx,
+      inning: about.inning ?? null,
+      half: about.halfInning === 'top' ? 'Top' : about.halfInning === 'bottom' ? 'Bot' : '',
+      event: result.event || 'Scoring Play',
+      description: result.description || '',
+      rbi: result.rbi ?? 0,
+      awayScore: result.awayScore ?? null,
+      homeScore: result.homeScore ?? null,
+      batterId: batter.id || null,
+      batterName: batter.fullName || '',
+    });
+  }
+  return out;
+}
+
 async function handleBoxScore(req, res) {
   res.setHeader('Cache-Control', 's-maxage=20, stale-while-revalidate=60');
   const gamePk = req.query?.gamePk;
@@ -292,19 +393,26 @@ async function handleBoxScore(req, res) {
     return res.status(400).json({ error: 'Valid numeric gamePk is required' });
   }
 
-  const [boxRes, lineRes, schedRes] = await Promise.all([
+  const [boxRes, lineRes, schedRes, pbpRes, contentRes] = await Promise.all([
     fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`),
-    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`),
-    fetch(`https://statsapi.mlb.com/api/v1/schedule?gamePk=${gamePk}&hydrate=decisions,team,venue`),
+    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`).catch(() => null),
+    fetch(`https://statsapi.mlb.com/api/v1/schedule?gamePk=${gamePk}&hydrate=decisions,team,venue`).catch(() => null),
+    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`).catch(() => null),
+    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/content`).catch(() => null),
   ]);
 
   if (!boxRes.ok) {
     return res.status(boxRes.status).json({ error: `MLB boxscore API returned ${boxRes.status}` });
   }
 
-  const boxData = await boxRes.json();
-  const lineData = lineRes.ok ? await lineRes.json() : {};
-  const schedData = schedRes.ok ? await schedRes.json() : {};
+  const [boxData, lineData, schedData, pbpData, contentData] = await Promise.all([
+    boxRes.json(),
+    lineRes && lineRes.ok ? lineRes.json().catch(() => ({})) : {},
+    schedRes && schedRes.ok ? schedRes.json().catch(() => ({})) : {},
+    pbpRes && pbpRes.ok ? pbpRes.json().catch(() => ({})) : {},
+    contentRes && contentRes.ok ? contentRes.json().catch(() => ({})) : {},
+  ]);
+
   const schedGame = schedData?.dates?.[0]?.games?.[0] || {};
 
   const parseSide = (sideData) => {
@@ -388,6 +496,8 @@ async function handleBoxScore(req, res) {
     .map((f) => ({ label: f.label, value: f.value }));
 
   const offense = lineData?.offense || {};
+  const scoringPlays = parseScoringPlays(pbpData);
+  const highlights = parseHighlights(contentData);
 
   return res.status(200).json({
     gamePk: Number(gamePk),
@@ -425,6 +535,8 @@ async function handleBoxScore(req, res) {
     },
     away: parseSide(boxData?.teams?.away),
     home: parseSide(boxData?.teams?.home),
+    scoringPlays,
+    highlights,
     gameInfo,
   });
 }
