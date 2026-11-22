@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
+import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
 const FA_CLASS_YEARS = ['2026', '2025', '2024', '2023', '2022'];
 const SEASON_YEARS = ['2026', '2025', '2024', '2023', '2022'];
@@ -133,6 +134,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('feed');
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
+  const [sidebarFreeAgents, setSidebarFreeAgents] = useState([]);
   const [selectedFaClass, setSelectedFaClass] = useState('2026');
   const [faStatMode, setFaStatMode] = useState('season');
   const [faSignedFilter, setFaSignedFilter] = useState('UNSIGNED');
@@ -181,7 +183,9 @@ export default function App() {
   const [loadingHubRoster, setLoadingHubRoster] = useState(false);
   const [hubRosterView, setHubRosterView] = useState('depth');
 
-  // Spending Multi-Year Cycle state
+  // Spending & Roster Payroll state
+  const [spendingMode, setSpendingMode] = useState('payroll');
+  const [payrollYear, setPayrollYear] = useState('2027');
   const [spendingCycle, setSpendingCycle] = useState('2026-27');
   const [spendingApiData, setSpendingApiData] = useState(null);
   const [loadingSpending, setLoadingSpending] = useState(false);
@@ -320,6 +324,9 @@ export default function App() {
         const data = await res.json();
         if (Array.isArray(data?.freeAgents)) {
           setFreeAgents(data.freeAgents);
+          if (String(classParam) === '2026' && modeParam === 'season') {
+            setSidebarFreeAgents(data.freeAgents.filter((f) => !f.isSigned));
+          }
         }
       }
     } catch {
@@ -456,7 +463,7 @@ export default function App() {
   }, [activeTab, hubTeam]);
 
   useEffect(() => {
-    if (activeTab === 'leaderboard') {
+    if (activeTab === 'leaderboard' && spendingMode === 'offseason') {
       let cancelled = false;
       setLoadingSpending(true);
       fetch(`/api/spending?cycle=${encodeURIComponent(spendingCycle)}`)
@@ -474,7 +481,7 @@ export default function App() {
         cancelled = true;
       };
     }
-  }, [activeTab, spendingCycle]);
+  }, [activeTab, spendingMode, spendingCycle, transactions.length]);
 
   const handleSyncNow = async (force = false, silent = false) => {
     setSyncing(true);
@@ -781,11 +788,11 @@ export default function App() {
           <nav className="hidden lg:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
             {[
               { id: 'feed', label: 'Live Feed' },
-              { id: 'freeAgents', label: `Free Agents (${freeAgents.length})` },
+              { id: 'freeAgents', label: `Free Agents (${sidebarFreeAgents.length || freeAgents.length})` },
               { id: 'scoresStandings', label: 'Scores & Standings' },
               { id: 'leaders', label: 'League Leaders' },
               { id: 'teamHub', label: 'Team Hub' },
-              { id: 'leaderboard', label: 'Spending' },
+              { id: 'leaderboard', label: 'Payroll & Spend' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1428,13 +1435,13 @@ export default function App() {
                     See all
                   </button>
                 </div>
-                {loadingFreeAgents ? (
+                {loadingFreeAgents && sidebarFreeAgents.length === 0 ? (
                   <p className="text-xs text-slate-400">Loading MLB free agents...</p>
-                ) : freeAgents.length === 0 ? (
-                  <p className="text-xs text-slate-400">No free agents listed yet.</p>
+                ) : sidebarFreeAgents.length === 0 ? (
+                  <p className="text-xs text-slate-400">No unsigned free agents listed yet.</p>
                 ) : (
                   <div className="space-y-2">
-                    {freeAgents.slice(0, 6).map((fa) => (
+                    {sidebarFreeAgents.slice(0, 6).map((fa) => (
                       <button
                         key={fa.playerId}
                         type="button"
@@ -2164,6 +2171,101 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Team Roster Price & Payroll Breakdown */}
+                  {(() => {
+                    const history = getTeamPayrollHistory(hubTeam);
+                    const p27 = TEAM_PAYROLLS['2027']?.[hubTeam] || {};
+                    const p26 = TEAM_PAYROLLS['2026']?.[hubTeam] || {};
+                    const liveTeamAdd = spendingLeaderboard.find((r) => r.team.abbr === hubTeam)?.totalMillions || 0;
+                    const cbtDiff27 = p27.cbt ? Number((p27.cbt - CBT_THRESHOLDS['2027']).toFixed(1)) : null;
+
+                    return (
+                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="font-extrabold text-base flex items-center gap-2">
+                              <DollarSign className="w-4 h-4 text-emerald-500" />
+                              <span>{info.short} Roster Payroll &amp; Luxury Tax</span>
+                            </h4>
+                            <p className="text-xs text-slate-500">
+                              Projected 2027 roster price, contract mix &amp; multi-year payroll history
+                            </p>
+                          </div>
+                          {cbtDiff27 !== null && (
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-xs font-extrabold ${
+                                cbtDiff27 > 0
+                                  ? 'bg-rose-500/15 text-rose-500'
+                                  : 'bg-emerald-500/15 text-emerald-500'
+                              }`}
+                            >
+                              {cbtDiff27 > 0
+                                ? `+$${cbtDiff27}M Over $${CBT_THRESHOLDS['2027']}M CBT`
+                                : `$${Math.abs(cbtDiff27)}M Under $${CBT_THRESHOLDS['2027']}M CBT`}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <div className="text-[11px] font-bold text-slate-400">2027 Payroll Proj</div>
+                            <div className="text-xl font-black text-emerald-500">${p27.payroll ?? '—'}M</div>
+                            {liveTeamAdd > 0 && (
+                              <div className="text-[10px] font-bold text-sky-500 mt-0.5">+${liveTeamAdd.toFixed(1)}M tracked</div>
+                            )}
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <div className="text-[11px] font-bold text-slate-400">2027 Luxury Tax</div>
+                            <div className="text-xl font-black">${p27.cbt ?? '—'}M</div>
+                            <div className="text-[10px] text-slate-500">CBT / AAV Basis</div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <div className="text-[11px] font-bold text-slate-400">2026 Roster Price</div>
+                            <div className="text-xl font-black">${p26.payroll ?? '—'}M</div>
+                            <div className="text-[10px] text-slate-500">2025: ${TEAM_PAYROLLS['2025']?.[hubTeam]?.payroll ?? '—'}M</div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                            <div className="text-[11px] font-bold text-slate-400">2028–30 Committed</div>
+                            <div className="text-sm font-black mt-1">
+                              ${p27.y2028 ?? 0}M / ${p27.y2029 ?? 0}M / ${p27.y2030 ?? 0}M
+                            </div>
+                            <div className="text-[10px] text-slate-500">’28 / ’29 / ’30</div>
+                          </div>
+                        </div>
+
+                        {p27.guarPct !== undefined && (
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center justify-between text-[11px] font-bold text-slate-500">
+                              <span>2027 Payroll Allocation</span>
+                              <div className="flex items-center gap-3">
+                                <span className="text-sky-500">Guaranteed {p27.guarPct}%</span>
+                                <span className="text-amber-500">Arb {p27.arbPct}%</span>
+                                <span className="text-emerald-500">Pre-Arb {p27.preArbPct}%</span>
+                              </div>
+                            </div>
+                            <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+                              <div className="h-full bg-sky-500" style={{ width: `${p27.guarPct}%` }} />
+                              <div className="h-full bg-amber-500" style={{ width: `${p27.arbPct}%` }} />
+                              <div className="h-full bg-emerald-500" style={{ width: `${p27.preArbPct}%` }} />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-4 gap-2 pt-1">
+                          {history.map((h) => (
+                            <div
+                              key={h.year}
+                              className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-center"
+                            >
+                              <div className="text-[10px] font-bold text-slate-400">{h.year === '2027' ? '2027 Proj' : h.year}</div>
+                              <div className="text-xs sm:text-sm font-black">${Number(h.payroll || 0).toFixed(1)}M</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Live Active Roster / Depth Chart & Injured List */}
                   <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2350,9 +2452,41 @@ export default function App() {
           </div>
         )}
 
-        {/* Spending Tab with Offseason Year Switcher */}
+        {/* Payroll & Spending Hub (Multi-Year Roster Payrolls + Offseason Activity) */}
         {activeTab === 'leaderboard' && (() => {
-          const activeRows =
+          const threshold = CBT_THRESHOLDS[payrollYear] || 244;
+          const prevYear = String(Number(payrollYear) - 1);
+
+          const payrollRows = MLB_TEAMS.map((t) => {
+            const cur = TEAM_PAYROLLS[payrollYear]?.[t.abbr] || { payroll: 0 };
+            const prev = TEAM_PAYROLLS[prevYear]?.[t.abbr] || null;
+            const liveTracked = spendingLeaderboard.find((r) => r.team.abbr === t.abbr);
+            const yoy = prev ? Number((cur.payroll - prev.payroll).toFixed(1)) : null;
+            const taxBasis = cur.cbt ?? cur.payroll;
+            const overTax = taxBasis > threshold;
+            return {
+              team: t,
+              payroll: cur.payroll || 0,
+              cbt: cur.cbt ?? null,
+              guarPct: cur.guarPct ?? null,
+              arbPct: cur.arbPct ?? null,
+              preArbPct: cur.preArbPct ?? null,
+              y2028: cur.y2028 ?? null,
+              y2029: cur.y2029 ?? null,
+              y2030: cur.y2030 ?? null,
+              yoy,
+              overTax,
+              liveDealsMillions: liveTracked?.totalMillions || 0,
+              liveMoves: liveTracked?.totalMoves || 0,
+            };
+          }).sort((a, b) => b.payroll - a.payroll);
+
+          const leaguePayrollTotal = payrollRows.reduce((s, r) => s + r.payroll, 0);
+          const leaguePayrollAvg = leaguePayrollTotal / 30;
+          const overTaxCount = payrollRows.filter((r) => r.overTax).length;
+          const maxPayroll = Math.max(1, ...payrollRows.map((r) => r.payroll));
+
+          const activeOffseasonRows =
             spendingApiData?.teams?.length > 0
               ? spendingApiData.teams.map((t) => ({
                   team: getTeamInfo(t.abbr),
@@ -2364,117 +2498,263 @@ export default function App() {
               : spendingLeaderboard;
           const displaySpent = spendingApiData ? spendingApiData.totalSpent : leagueStats.totalSpent;
           const displayMoves = spendingApiData ? spendingApiData.totalMoves : transactions.length;
-          const topClub = [...activeRows].sort((a, b) => b.totalMoves - a.totalMoves)[0];
-          const cycleMaxSpend = Math.max(1, ...activeRows.map((r) => r.totalMillions));
+          const topClub = [...activeOffseasonRows].sort((a, b) => b.totalMoves - a.totalMoves)[0];
+          const cycleMaxSpend = Math.max(1, ...activeOffseasonRows.map((r) => r.totalMillions));
 
           return (
             <div className="space-y-4">
+              {/* Top Mode & Year Switcher */}
               <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-extrabold">Offseason Spending &amp; Activity ({spendingCycle})</h2>
+                  <h2 className="text-xl font-extrabold">
+                    {spendingMode === 'payroll'
+                      ? `${payrollYear === '2027' ? '2027 Projected' : payrollYear} MLB Team Roster Payrolls`
+                      : `Offseason Deals & Activity (${spendingCycle})`}
+                  </h2>
                   <p className="text-xs text-slate-500">
-                    {spendingApiData?.dataSource || 'Sorted by disclosed contract dollars, then total roster moves'}
+                    {spendingMode === 'payroll'
+                      ? PAYROLL_SOURCES[payrollYear]
+                      : (spendingApiData?.dataSource || 'Sorted by disclosed contract dollars, then total roster moves')}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                  {['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => (
-                    <button
-                      key={cyc}
-                      onClick={() => setSpendingCycle(cyc)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        spendingCycle === cyc
-                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      {cyc}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                    {[
+                      { id: 'payroll', label: 'Roster Payrolls' },
+                      { id: 'offseason', label: 'Offseason Moves' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setSpendingMode(m.id)}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                          spendingMode === m.id
+                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {spendingMode === 'payroll' ? (
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                      {PAYROLL_YEARS.map((yr) => (
+                        <button
+                          key={yr}
+                          onClick={() => setPayrollYear(yr)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                            payrollYear === yr
+                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {yr === '2027' ? '2027 Proj' : yr}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                      {['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => (
+                        <button
+                          key={cyc}
+                          onClick={() => setSpendingCycle(cyc)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                            spendingCycle === cyc
+                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {cyc}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xl font-black">${Number(displaySpent || 0).toFixed(1)}M</div>
-                    <div className="text-xs text-slate-500">Disclosed Commitments ({spendingCycle})</div>
-                  </div>
-                </div>
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
-                    <Activity className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xl font-black">{displayMoves}</div>
-                    <div className="text-xs text-slate-500">MLB Moves in {spendingCycle}</div>
-                  </div>
-                </div>
-                <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
-                    <Trophy className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xl font-black">{topClub?.team?.short || '—'}</div>
-                    <div className="text-xs text-slate-500">
-                      Most Active ({topClub?.totalMoves || 0} moves)
+              {spendingMode === 'payroll' ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                        <DollarSign className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">${(leaguePayrollTotal / 1000).toFixed(2)}B</div>
+                        <div className="text-xs text-slate-500">Total MLB Payroll ({payrollYear})</div>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">${leaguePayrollAvg.toFixed(1)}M</div>
+                        <div className="text-xs text-slate-500">Average Club Roster Price</div>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-500 flex items-center justify-center">
+                        <Trophy className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">{overTaxCount} Clubs</div>
+                        <div className="text-xs text-slate-500">Above ${threshold}M Luxury Tax Line</div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-                {loadingSpending ? (
-                  <div className="text-center py-12 text-xs text-slate-400">
-                    Loading {spendingCycle} MLB offseason activity...
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
-                    {activeRows.map((row, idx) => {
-                      const pct = row.totalMillions > 0 ? Math.max(6, (row.totalMillions / cycleMaxSpend) * 100) : 0;
-                      return (
-                        <div
-                          key={row.team.abbr}
-                          onClick={() => openTeamHub(row.team.abbr)}
-                          className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
-                              <span
-                                className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
-                                style={{ backgroundColor: row.team.color }}
-                              >
-                                {row.team.abbr}
-                              </span>
-                              <span className="font-bold text-sm">{row.team.name}</span>
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:gap-px bg-slate-100 dark:bg-slate-800">
+                      {payrollRows.map((row, idx) => {
+                        const pct = Math.max(8, (row.payroll / maxPayroll) * 100);
+                        return (
+                          <div
+                            key={row.team.abbr}
+                            onClick={() => openTeamHub(row.team.abbr)}
+                            className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="w-6 text-xs font-black text-slate-400 shrink-0">#{idx + 1}</span>
+                                <span
+                                  className="w-10 text-center py-0.5 rounded text-xs font-black text-white shrink-0"
+                                  style={{ backgroundColor: row.team.color }}
+                                >
+                                  {row.team.abbr}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-sm truncate flex items-center gap-1.5">
+                                    <span>{row.team.name}</span>
+                                    {row.overTax && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-rose-500/15 text-rose-500 shrink-0">
+                                        Over CBT
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                                    {row.cbt !== null && <span>CBT: ${row.cbt.toFixed(1)}M</span>}
+                                    {row.yoy !== null && (
+                                      <span className={row.yoy >= 0 ? 'text-emerald-500 font-semibold' : 'text-rose-400 font-semibold'}>
+                                        {row.yoy >= 0 ? `+$${row.yoy}M` : `-$${Math.abs(row.yoy)}M`} vs {prevYear}
+                                      </span>
+                                    )}
+                                    {payrollYear === '2027' && row.guarPct !== null && (
+                                      <span>• {row.guarPct}% Guar / {row.arbPct}% Arb</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <div className="font-black text-sm sm:text-base">${row.payroll.toFixed(1)}M</div>
+                                {payrollYear === '2027' && row.liveDealsMillions > 0 && (
+                                  <div className="text-[10px] font-bold text-sky-500">
+                                    +${row.liveDealsMillions.toFixed(1)}M new
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-right">
-                              <span className="font-extrabold text-sm">
-                                ${row.totalMillions.toFixed(1)}M
-                              </span>
-                              <span className="ml-2 text-xs text-slate-400">
-                                ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
-                              </span>
-                            </div>
-                          </div>
-                          {pct > 0 && (
+
                             <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                               <div
                                 className="h-full rounded-full"
                                 style={{ width: `${pct}%`, backgroundColor: row.team.color }}
                               />
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                        <DollarSign className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">${Number(displaySpent || 0).toFixed(1)}M</div>
+                        <div className="text-xs text-slate-500">Disclosed New Deals ({spendingCycle})</div>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">{displayMoves}</div>
+                        <div className="text-xs text-slate-500">MLB Moves in {spendingCycle}</div>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                        <Trophy className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xl font-black">{topClub?.team?.short || '—'}</div>
+                        <div className="text-xs text-slate-500">
+                          Most Active ({topClub?.totalMoves || 0} moves)
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    {loadingSpending ? (
+                      <div className="text-center py-12 text-xs text-slate-400">
+                        Loading {spendingCycle} MLB offseason activity...
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:gap-px bg-slate-100 dark:bg-slate-800">
+                        {activeOffseasonRows.map((row, idx) => {
+                          const pct = row.totalMillions > 0 ? Math.max(6, (row.totalMillions / cycleMaxSpend) * 100) : 0;
+                          return (
+                            <div
+                              key={row.team.abbr}
+                              onClick={() => openTeamHub(row.team.abbr)}
+                              className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <span className="w-6 text-xs font-black text-slate-400">#{idx + 1}</span>
+                                  <span
+                                    className="w-10 text-center py-0.5 rounded text-xs font-black text-white"
+                                    style={{ backgroundColor: row.team.color }}
+                                  >
+                                    {row.team.abbr}
+                                  </span>
+                                  <span className="font-bold text-sm">{row.team.name}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-extrabold text-sm">
+                                    ${row.totalMillions.toFixed(1)}M
+                                  </span>
+                                  <span className="ml-2 text-xs text-slate-400">
+                                    ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
+                                  </span>
+                                </div>
+                              </div>
+                              {pct > 0 && (
+                                <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{ width: `${pct}%`, backgroundColor: row.team.color }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           );
         })()}
@@ -2725,7 +3005,7 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                       {playerStats.seasons.map((row, i) => (
-                        <tr key={`${row.season}-${i}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                        <tr key={`${row.season}-${i}`} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${String(row.team).includes("TM") ? "bg-sky-500/5 font-semibold" : ""}`}>
                           <td className="py-2 pr-3 font-extrabold">{row.season}</td>
                           <td className="py-2 pr-3 font-semibold text-slate-500">{row.team}</td>
                           {playerStats.isPitcher ? (
