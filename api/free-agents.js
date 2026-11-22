@@ -80,7 +80,6 @@ function getPerformanceScore(person, isCareer = false) {
     if (isCareer) {
       return (ip * 0.2) + (ks * 0.15) + (saves * 1.2) + (holds * 0.5) + eraBonus;
     }
-    // Fairly reward high-leverage relievers (saves, holds, appearances) alongside starters
     const reliefBonus = (saves * 4.5) + (holds * 2.5) + (games >= 40 && ip < 100 ? games * 1.1 : 0);
     return (ip * 1.0) + (ks * 0.75) + eraBonus + reliefBonus;
   }
@@ -104,47 +103,62 @@ function assignTier(score, isCareer) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
 
-  const currentYear = new Date().getFullYear();
-  const defaultStatSeason = new Date().getMonth() >= 9 ? currentYear : currentYear - 1;
-  const requestedSeason = String(req.query?.season || defaultStatSeason).toLowerCase();
-  const isCareer = requestedSeason === 'career';
-  const statSeason = isCareer
-    ? 'career'
-    : (/^\d{4}$/.test(requestedSeason) ? Number(requestedSeason) : defaultStatSeason);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const defaultClassYear = now.getMonth() >= 9 ? currentYear : currentYear - 1;
+
+  const rawClass = String(req.query?.classYear || req.query?.season || defaultClassYear);
+  const classYear = /^\d{4}$/.test(rawClass) ? Number(rawClass) : defaultClassYear;
+  const isCareer = String(req.query?.statMode || '').toLowerCase() === 'career';
 
   let candidates = [];
 
-  for (const season of [currentYear, currentYear + 1, currentYear - 1]) {
+  // Attempt 1: Official MLB Stats API /people/freeAgents for that exact class year
+  const seasonsToTry = classYear === defaultClassYear ? [classYear, classYear + 1] : [classYear];
+  for (const s of seasonsToTry) {
     try {
-      const r = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${season}`);
+      const r = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${s}`);
       if (!r.ok) continue;
       const data = await r.json();
       if (Array.isArray(data?.freeAgents) && data.freeAgents.length > 0) {
-        const unsigned = data.freeAgents.filter((fa) => !fa.newTeam && fa.player?.id);
-        if (unsigned.length > 0) {
-          candidates = unsigned.map((fa) => ({
-            playerId: fa.player.id,
+        const seen = new Map();
+        for (const fa of data.freeAgents) {
+          const pid = fa.player?.id;
+          if (!pid) continue;
+          const signedTeam = fa.newTeam?.id
+            ? MLB_TEAM_ID_TO_ABBR[fa.newTeam.id] || fa.newTeam.abbreviation || fa.newTeam.name
+            : null;
+          seen.set(pid, {
+            playerId: pid,
             fullName: fa.player.fullName || 'Unknown Player',
             position: fa.position?.abbreviation || 'MLB',
             lastTeam: MLB_TEAM_ID_TO_ABBR[fa.originalTeam?.id] || 'MLB',
-            faDate: fa.dateSigned || `${season} Class`,
-          }));
+            signedTeam,
+            isSigned: Boolean(signedTeam),
+            signedDate: fa.dateSigned || '',
+            faDate: `${classYear} Class`,
+          });
+        }
+        if (seen.size > 0) {
+          candidates = Array.from(seen.values());
           break;
         }
       }
     } catch {
-      // Fall through to transaction scan
+      // Fall through to official MLB transaction scan for that offseason
     }
   }
 
+  // Attempt 2: Scan Official MLB Stats API Transactions for that specific offseason (Oct 25 -> Apr 1)
   if (candidates.length === 0) {
     try {
-      const end = new Date();
-      const start = new Date(Date.now() - 50 * 24 * 60 * 60 * 1000);
-      const fmt = (d) => d.toISOString().slice(0, 10);
+      const startDate = `${classYear}-10-25`;
+      const endBound = new Date(`${classYear + 1}-04-01T00:00:00Z`);
+      const endDateObj = endBound > now ? now : endBound;
+      const endDate = endDateObj.toISOString().slice(0, 10);
 
       const txRes = await fetch(
-        `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${fmt(start)}&endDate=${fmt(end)}`
+        `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${startDate}&endDate=${endDate}`
       );
       if (txRes.ok) {
         const txData = await txRes.json();
@@ -176,40 +190,57 @@ export default async function handler(req, res) {
                 fullName: tx.person?.fullName || 'Unknown Player',
                 position: 'MLB',
                 lastTeam: teamAbbr,
-                faDate: tx.date || '',
+                faDate: tx.date || `${classYear} Class`,
                 txTime,
               });
             }
           }
 
           if (['SFA', 'SGN'].includes(tx.typeCode) && MLB_TEAM_ID_TO_ABBR[tx.toTeam?.id]) {
-            const prevSign = signedMap.get(pid) || 0;
-            if (txTime >= prevSign) signedMap.set(pid, txTime);
+            const isMinorDeal = desc.includes('minor league');
+            const prevSign = signedMap.get(pid);
+            if (!prevSign || txTime >= prevSign.txTime) {
+              signedMap.set(pid, {
+                team: MLB_TEAM_ID_TO_ABBR[tx.toTeam.id],
+                date: tx.date || '',
+                txTime,
+                isMinorDeal,
+              });
+            }
           }
         }
 
         for (const [pid, entry] of faMap.entries()) {
-          const signedTime = signedMap.get(pid) || 0;
-          if (signedTime <= entry.txTime) {
-            candidates.push(entry);
-          }
+          const signInfo = signedMap.get(pid);
+          const signedAfterFa = signInfo && signInfo.txTime >= entry.txTime;
+          candidates.push({
+            playerId: entry.playerId,
+            fullName: entry.fullName,
+            position: entry.position,
+            lastTeam: entry.lastTeam,
+            signedTeam: signedAfterFa ? signInfo.team : null,
+            isSigned: Boolean(signedAfterFa),
+            signedDate: signedAfterFa ? signInfo.date : '',
+            faDate: entry.faDate,
+          });
         }
       }
     } catch (err) {
-      return res.status(500).json({ error: `Failed to fetch MLB free agents: ${err.message}` });
+      return res.status(500).json({ error: `Failed to fetch ${classYear} free agent class: ${err.message}` });
     }
   }
 
   if (candidates.length === 0) {
-    return res.status(200).json({ freeAgents: [], season: statSeason });
+    return res.status(200).json({ classYear, statMode: isCareer ? 'career' : 'season', freeAgents: [] });
   }
 
-  const limited = candidates.slice(0, 150);
+  // Hydrate up to 180 candidates with stats from classYear (or career)
+  const limited = candidates.slice(0, 180);
   const enriched = [];
 
   const hydrateParam = isCareer
     ? 'stats(group=[hitting,pitching],type=[career])'
-    : `stats(group=[hitting,pitching],type=[season],season=${statSeason})`;
+    : `stats(group=[hitting,pitching],type=[season],season=${classYear})`;
 
   for (let i = 0; i < limited.length; i += 50) {
     const chunk = limited.slice(i, i + 50);
@@ -233,7 +264,10 @@ export default async function handler(req, res) {
             position: pos,
             age: p?.currentAge || '—',
             lastTeam: c.lastTeam,
-            statLine: statLine || `No MLB stats in ${isCareer ? 'career' : statSeason}`,
+            signedTeam: c.signedTeam || null,
+            isSigned: Boolean(c.isSigned),
+            signedDate: c.signedDate || '',
+            statLine: statLine || `No MLB stats in ${isCareer ? 'career' : classYear}`,
             hasMlbStats: Boolean(statLine),
             score: Number(score.toFixed(1)),
             tier: assignTier(score, isCareer),
@@ -257,8 +291,9 @@ export default async function handler(req, res) {
   enriched.sort((a, b) => b.score - a.score || a.fullName.localeCompare(b.fullName));
 
   return res.status(200).json({
-    season: statSeason,
+    classYear,
+    statMode: isCareer ? 'career' : 'season',
     count: enriched.length,
-    freeAgents: enriched.slice(0, 80),
+    freeAgents: enriched.slice(0, 100),
   });
 }
