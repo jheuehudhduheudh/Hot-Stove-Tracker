@@ -27,7 +27,6 @@ function getPreferredStatSplit(person) {
     return { group: preferredGroup, stat: preferred.splits[0].stat };
   }
 
-  // Fallback only if primary stat group has no data
   const fallback = stats.find((s) => s?.splits?.[0]?.stat);
   if (fallback) {
     return {
@@ -44,7 +43,8 @@ function formatStatLine(person) {
   const { group, stat: split } = picked;
 
   if (group === 'pitching' && (split.inningsPitched || split.era)) {
-    return `${split.era || '—'} ERA • ${split.whip || '—'} WHIP • ${split.strikeOuts ?? 0} K (${split.inningsPitched || '0'} IP)`;
+    const svText = Number(split.saves || 0) >= 5 ? ` • ${split.saves} SV` : '';
+    return `${split.era || '—'} ERA • ${split.whip || '—'} WHIP • ${split.strikeOuts ?? 0} K (${split.inningsPitched || '0'} IP)${svText}`;
   }
   if (group === 'hitting' && (split.atBats > 0 || split.avg)) {
     return `${split.avg || '—'} AVG • ${split.homeRuns ?? 0} HR • ${split.ops || '—'} OPS`;
@@ -72,11 +72,17 @@ function getPerformanceScore(person, isCareer = false) {
     const ip = parseFloat(split.inningsPitched || 0);
     const ks = Number(split.strikeOuts || 0);
     const era = parseFloat(split.era || 5.5);
-    const eraBonus = ip >= 30 ? Math.max(0, (4.8 - era) * 35) : 0;
+    const games = Number(split.gamesPlayed || 0);
+    const saves = Number(split.saves || 0);
+    const holds = Number(split.holds || 0);
+    const eraBonus = ip >= 25 ? Math.max(0, (4.8 - era) * 38) : 0;
+
     if (isCareer) {
-      return (ip * 0.2) + (ks * 0.15) + eraBonus;
+      return (ip * 0.2) + (ks * 0.15) + (saves * 1.2) + (holds * 0.5) + eraBonus;
     }
-    return (ip * 1.0) + (ks * 0.75) + eraBonus;
+    // Fairly reward high-leverage relievers (saves, holds, appearances) alongside starters
+    const reliefBonus = (saves * 4.5) + (holds * 2.5) + (games >= 40 && ip < 100 ? games * 1.1 : 0);
+    return (ip * 1.0) + (ks * 0.75) + eraBonus + reliefBonus;
   }
 
   return 0;
@@ -108,7 +114,6 @@ export default async function handler(req, res) {
 
   let candidates = [];
 
-  // Attempt 1: Official MLB Stats API /people/freeAgents endpoint
   for (const season of [currentYear, currentYear + 1, currentYear - 1]) {
     try {
       const r = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${season}`);
@@ -132,7 +137,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // Attempt 2: Build live unsigned free agent pool from official MLB Stats API transactions
   if (candidates.length === 0) {
     try {
       const end = new Date();

@@ -1,3 +1,12 @@
+const MLB_TEAM_ID_TO_ABBR = {
+  108: 'LAA', 109: 'ARI', 110: 'BAL', 111: 'BOS', 112: 'CHC',
+  113: 'CIN', 114: 'CLE', 115: 'COL', 116: 'DET', 117: 'HOU',
+  118: 'KC',  119: 'LAD', 120: 'WSH', 121: 'NYM', 133: 'ATH',
+  134: 'PIT', 135: 'SD',  136: 'SEA', 137: 'SF',  138: 'STL',
+  139: 'TB',  140: 'TEX', 141: 'TOR', 142: 'MIN', 143: 'PHI',
+  144: 'ATL', 145: 'CWS', 146: 'MIA', 147: 'NYY', 158: 'MIL',
+};
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
 
@@ -41,7 +50,10 @@ export default async function handler(req, res) {
       .filter((sp) => sp.season && sp.stat)
       .map((sp) => ({
         season: sp.season,
-        team: sp.team?.abbreviation || sp.team?.name || (sp.numTeams ? `${sp.numTeams} TM` : 'MLB'),
+        team:
+          MLB_TEAM_ID_TO_ABBR[sp.team?.id] ||
+          sp.team?.abbreviation ||
+          (sp.numTeams ? `${sp.numTeams} TM` : sp.team?.name?.slice(0, 3).toUpperCase() || 'MLB'),
         stat: sp.stat,
       }))
       .reverse();
