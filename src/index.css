@@ -139,3 +139,40 @@ html:not(.dark) {
 .animate-pop-in {
   animation: hst-pop-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+/* Directional Tab Content Slide Transitions */
+@keyframes hst-slide-in-right {
+  0% { opacity: 0; transform: translateX(18px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes hst-slide-in-left {
+  0% { opacity: 0; transform: translateX(-18px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+.animate-slide-in-right {
+  animation: hst-slide-in-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-slide-in-left {
+  animation: hst-slide-in-left 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Smooth spring transition for sliding tab pill indicator */
+.hst-sliding-pill {
+  transition:
+    transform 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    width 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 180ms ease;
+  will-change: transform, width;
+}
+
+/* Hide scrollbar cleanly for horizontal pill strips on mobile */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

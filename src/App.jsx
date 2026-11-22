@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   RefreshCw, Sun, Moon, Search, Filter, Download, ArrowLeft, Zap,
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
@@ -13,6 +13,7 @@ import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamP
 const FA_CLASS_YEARS = Array.from({ length: 12 }, (_, i) => String(2026 - i)); // 2026 -> 2015
 const ALL_SEASON_YEARS = Array.from({ length: 27 }, (_, i) => String(2026 - i)); // 2026 -> 2000
 const QUICK_YEARS = ['2026', '2025', '2024'];
+const MAIN_TAB_ORDER = ['feed', 'freeAgents', 'scoresStandings', 'leaders', 'teamHub', 'leaderboard'];
 
 const QUICK_JUMP_DATES = [
   { label: '2026 WS G5 (MIL @ TB)', date: '2026-10-28' },
@@ -298,6 +299,137 @@ function StandingsSkeleton({ label = 'Loading MLB standings...' }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function SlidingSegmented({
+  options,
+  value,
+  onChange,
+  hiddenIndicator = false,
+  variant = 'surface', // 'nav' | 'surface' | 'sky' | 'contrast' | 'card'
+  className = '',
+  buttonClassName = '',
+  asNav = false,
+}) {
+  const containerRef = useRef(null);
+  const btnRefs = useRef(new Map());
+  const [pill, setPill] = useState({ left: 0, width: 0, ready: false, animate: false });
+
+  const measure = (allowAnimate = true) => {
+    const container = containerRef.current;
+    const activeBtn = btnRefs.current.get(value);
+    if (!container || !activeBtn || hiddenIndicator) {
+      setPill((prev) => ({ ...prev, ready: false }));
+      return;
+    }
+    const left = activeBtn.offsetLeft;
+    const width = activeBtn.offsetWidth;
+    setPill((prev) => ({
+      left,
+      width,
+      ready: width > 0,
+      animate: allowAnimate && prev.ready,
+    }));
+  };
+
+  useLayoutEffect(() => {
+    measure(true);
+  }, [value, hiddenIndicator, options.map((o) => `${o.id}:${o.label}`).join('|')]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onResize = () => measure(false);
+    window.addEventListener('resize', onResize);
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => measure(false));
+      ro.observe(container);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (ro) ro.disconnect();
+    };
+  }, [value, hiddenIndicator]);
+
+  const styles = {
+    nav: {
+      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/85 p-1 rounded-xl border border-slate-200/70 dark:border-slate-700/50',
+      pill: 'bg-white dark:bg-slate-900 rounded-lg shadow-sm ring-1 ring-slate-200/70 dark:ring-slate-700/80',
+      activeText: 'text-sky-600 dark:text-sky-400',
+      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
+      btn: 'px-2.5 xl:px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold whitespace-nowrap',
+      insetY: 'top-1 bottom-1',
+    },
+    surface: {
+      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl max-w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-white dark:bg-slate-900 rounded-lg shadow-sm ring-1 ring-slate-200/60 dark:ring-slate-700/70',
+      activeText: 'text-sky-600 dark:text-sky-400',
+      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
+      btn: 'px-3 py-1 rounded-lg text-xs font-bold whitespace-nowrap',
+      insetY: 'top-1 bottom-1',
+    },
+    sky: {
+      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-full max-w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-sky-600 rounded-full shadow-sm shadow-sky-600/30',
+      activeText: 'text-white',
+      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
+      btn: 'px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap',
+      insetY: 'top-1 bottom-1',
+    },
+    contrast: {
+      wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-full max-w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-slate-900 dark:bg-white rounded-full shadow-sm',
+      activeText: 'text-white dark:text-slate-900',
+      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
+      btn: 'px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap',
+      insetY: 'top-1 bottom-1',
+    },
+    card: {
+      wrap: 'relative inline-flex items-center gap-1 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-full overflow-x-auto no-scrollbar',
+      pill: 'bg-sky-600 rounded-xl shadow-sm shadow-sky-600/25',
+      activeText: 'text-white',
+      idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
+      btn: 'px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap',
+      insetY: 'top-1.5 bottom-1.5',
+    },
+  };
+
+  const st = styles[variant] || styles.surface;
+  const WrapperTag = asNav ? 'nav' : 'div';
+
+  return (
+    <WrapperTag ref={containerRef} className={`${st.wrap} ${className}`}>
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute left-0 ${st.insetY} ${st.pill} ${pill.animate ? 'hst-sliding-pill' : ''}`}
+        style={{
+          transform: `translateX(${pill.left}px)`,
+          width: `${pill.width}px`,
+          opacity: pill.ready && !hiddenIndicator ? 1 : 0,
+        }}
+      />
+      {options.map((opt) => {
+        const isActive = !hiddenIndicator && String(value) === String(opt.id);
+        return (
+          <button
+            key={opt.id}
+            ref={(el) => {
+              if (el) btnRefs.current.set(opt.id, el);
+              else btnRefs.current.delete(opt.id);
+            }}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            className={`relative z-10 transition-colors duration-200 ${st.btn} ${buttonClassName} ${
+              isActive ? st.activeText : st.idleText
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </WrapperTag>
   );
 }
 
@@ -720,6 +852,21 @@ export default function App() {
     const t = getInitialUrlParams().get('tab');
     return ['feed', 'freeAgents', 'scoresStandings', 'leaders', 'teamHub', 'leaderboard'].includes(t) ? t : 'feed';
   });
+  const [tabDirection, setTabDirection] = useState('right');
+  const [, setClockTick] = useState(0);
+
+  const switchMainTab = (nextTab) => {
+    setSelectedPlayer(null);
+    setCompareOpen(false);
+    setActiveTab((prev) => {
+      if (prev !== nextTab) {
+        const prevIdx = MAIN_TAB_ORDER.indexOf(prev);
+        const nextIdx = MAIN_TAB_ORDER.indexOf(nextTab);
+        setTabDirection(nextIdx >= prevIdx ? 'right' : 'left');
+      }
+      return nextTab;
+    });
+  };
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
   const [sidebarFreeAgents, setSidebarFreeAgents] = useState([]);
@@ -1333,6 +1480,26 @@ export default function App() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // Keep "Synced: Xm ago" fresh & auto-sync silently if returning to an idle tab after 15+ minutes
+  useEffect(() => {
+    const tickId = setInterval(() => setClockTick((t) => t + 1), 60000);
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      setClockTick((t) => t + 1);
+      if (lastSyncedAt) {
+        const ageMs = Date.now() - new Date(lastSyncedAt).getTime();
+        if (ageMs > 15 * 60 * 1000 && !syncing) {
+          handleSyncNow(false, true);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(tickId);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [lastSyncedAt, syncing]);
+
   // Smart 30-second Live Auto-Polling for Scoreboard (only runs if at least 1 game is Live)
   const hasLiveGames = useMemo(() => games.some((g) => g.abstractState === 'Live'), [games]);
   useEffect(() => {
@@ -1685,7 +1852,7 @@ export default function App() {
                   HOT STOVE TRACKER
                 </h1>
                 <span
-                  className={`hidden xl:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  className={`hidden 2xl:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                     isSupabaseConfigured
                       ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                       : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
@@ -1701,28 +1868,22 @@ export default function App() {
             </div>
           </div>
 
-          <nav className="hidden lg:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
-            {[
+          <SlidingSegmented
+            asNav
+            variant="nav"
+            className="hidden lg:inline-flex"
+            value={activeTab}
+            hiddenIndicator={Boolean(selectedPlayer || compareOpen)}
+            onChange={switchMainTab}
+            options={[
               { id: 'feed', label: 'Live Feed' },
               { id: 'freeAgents', label: `Free Agents (${sidebarFreeAgents.length || freeAgents.length})` },
               { id: 'scoresStandings', label: 'Scores & Standings' },
               { id: 'leaders', label: 'League Leaders' },
               { id: 'teamHub', label: 'Team Hub' },
               { id: 'leaderboard', label: 'Payroll & Spend' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => { setSelectedPlayer(null); setCompareOpen(false); setActiveTab(tab.id); }}
-                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-semibold transition whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
+            ]}
+          />
 
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -2139,26 +2300,16 @@ export default function App() {
                   {/* Comparison Controls Bar */}
                   <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                        {[
+                      <SlidingSegmented
+                        variant="surface"
+                        value={compareScope}
+                        onChange={setCompareScope}
+                        options={[
                           { id: 'career', label: 'Career' },
                           { id: 'latest', label: 'Latest Season' },
                           { id: 'season', label: 'Pick Year' },
-                        ].map((sc) => (
-                          <button
-                            key={sc.id}
-                            type="button"
-                            onClick={() => setCompareScope(sc.id)}
-                            className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                              compareScope === sc.id
-                                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {sc.label}
-                          </button>
-                        ))}
-                      </div>
+                        ]}
+                      />
 
                       {compareScope === 'season' && compareYearOptions.length > 0 && (
                         <YearPicker
@@ -2170,25 +2321,15 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                      {[
+                    <SlidingSegmented
+                      variant="surface"
+                      value={compareStatGroup}
+                      onChange={setCompareStatGroup}
+                      options={[
                         { id: 'hitting', label: 'Hitting' },
                         { id: 'pitching', label: 'Pitching' },
-                      ].map((g) => (
-                        <button
-                          key={g.id}
-                          type="button"
-                          onClick={() => setCompareStatGroup(g.id)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                            compareStatGroup === g.id
-                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                              : 'text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          {g.label}
-                        </button>
-                      ))}
-                    </div>
+                      ]}
+                    />
                   </div>
 
                   {mismatchNotice && (
@@ -2567,26 +2708,17 @@ export default function App() {
               ) : (
                 <>
                   {/* Profile Sub-Navigation Tabs */}
-                  <div className="flex flex-wrap items-center gap-1.5 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 w-fit">
-                    {[
+                  <SlidingSegmented
+                    variant="card"
+                    value={profileSubTab}
+                    onChange={setProfileSubTab}
+                    options={[
                       { id: 'overview', label: 'Overview & Statcast' },
                       { id: 'seasons', label: `Year-by-Year (${uniqueRegSeasons})` },
                       { id: 'postseason', label: `Postseason (${uniquePostSeasons})` },
                       { id: 'splits', label: `Splits (${playerStats.splits?.season || ''})` },
-                    ].map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => setProfileSubTab(t.id)}
-                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-                          profileSubTab === t.id
-                            ? 'bg-sky-600 text-white shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
 
                   {/* SUB-TAB 1: Overview & Baseball Savant */}
                   {profileSubTab === 'overview' && (
@@ -3074,7 +3206,7 @@ export default function App() {
             </div>
           );
         })() : (
-        <>
+        <div key={activeTab} className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
 
 
         {activeTab === 'feed' && (
@@ -3216,28 +3348,22 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {[
+                  <SlidingSegmented
+                    variant="contrast"
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
                       { id: 'ALL', label: 'All Status' },
                       { id: 'REPORTED', label: 'Reported' },
                       { id: 'OFFICIAL', label: 'Official' },
-                    ].map((s) => (
-                      <button
-                        key={s.id}
-                        onClick={() => setStatusFilter(s.id)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition ${
-                          statusFilter === s.id
-                            ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
 
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {[
+                  <SlidingSegmented
+                    variant="sky"
+                    value={typeFilter}
+                    onChange={setTypeFilter}
+                    options={[
                       { id: 'ALL', label: 'All Moves' },
                       { id: 'SIGNING', label: 'Signings' },
                       { id: 'TRADE', label: 'Trades' },
@@ -3246,20 +3372,8 @@ export default function App() {
                       { id: 'INJURED_LIST', label: 'Injured List' },
                       { id: 'CALLUP_OPTION', label: 'Call-Ups / Options' },
                       { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setTypeFilter(m.id)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
-                          typeFilter === m.id
-                            ? 'bg-sky-600 text-white'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
                 </div>
               </div>
 
@@ -3678,24 +3792,16 @@ export default function App() {
                     }}
                   />
 
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl">
-                    {[
+                  <SlidingSegmented
+                    variant="surface"
+                    value={faStatMode}
+                    onChange={setFaStatMode}
+                    buttonClassName="!px-2.5"
+                    options={[
                       { id: 'season', label: `${selectedFaClass} Stats` },
                       { id: 'career', label: 'Career' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setFaStatMode(m.id)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
-                          faStatMode === m.id
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
                 </div>
               </div>
 
@@ -3722,25 +3828,17 @@ export default function App() {
                     <Bookmark className={`w-3.5 h-3.5 ${watchlistOnly ? 'fill-current' : ''}`} />
                     <span>Watchlist ({watchlistIds.length})</span>
                   </button>
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                    {[
+                  <SlidingSegmented
+                    variant="surface"
+                    value={faSignedFilter}
+                    onChange={setFaSignedFilter}
+                    buttonClassName="!px-2.5 !text-[11px]"
+                    options={[
                       { id: 'ALL', label: 'All' },
                       { id: 'UNSIGNED', label: 'Unsigned' },
                       { id: 'SIGNED', label: 'Signed' },
-                    ].map((st) => (
-                      <button
-                        key={st.id}
-                        onClick={() => setFaSignedFilter(st.id)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
-                          faSignedFilter === st.id
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {st.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
                 </div>
 
                 <div className="flex flex-wrap gap-1.5">
@@ -4055,24 +4153,15 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                    {[
+                  <SlidingSegmented
+                    variant="surface"
+                    value={standingsView}
+                    onChange={setStandingsView}
+                    options={[
                       { id: 'divisions', label: 'Divisions' },
                       { id: 'wildCard', label: 'Wild Card' },
-                    ].map((v) => (
-                      <button
-                        key={v.id}
-                        onClick={() => setStandingsView(v.id)}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                          standingsView === v.id
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {v.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
 
                   <YearPicker value={standingsSeason} onChange={setStandingsSeason} />
                 </div>
@@ -4180,24 +4269,15 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                  {[
+                <SlidingSegmented
+                  variant="surface"
+                  value={leadersGroup}
+                  onChange={setLeadersGroup}
+                  options={[
                     { id: 'hitting', label: 'Hitting' },
                     { id: 'pitching', label: 'Pitching' },
-                  ].map((grp) => (
-                    <button
-                      key={grp.id}
-                      onClick={() => setLeadersGroup(grp.id)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                        leadersGroup === grp.id
-                          ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                          : 'text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {grp.label}
-                    </button>
-                  ))}
-                </div>
+                  ]}
+                />
 
                 <YearPicker value={leadersSeason} onChange={setLeadersSeason} />
               </div>
@@ -4484,25 +4564,16 @@ export default function App() {
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                        {[
+                      <SlidingSegmented
+                        variant="surface"
+                        value={hubRosterView}
+                        onChange={setHubRosterView}
+                        options={[
                           { id: 'depth', label: 'Depth Chart' },
                           { id: 'il', label: `Injured List (${hubRoster?.ilCount ?? 0})` },
                           { id: 'all', label: `Full Roster (${hubRoster?.activeCount ?? 0})` },
-                        ].map((tab) => (
-                          <button
-                            key={tab.id}
-                            onClick={() => setHubRosterView(tab.id)}
-                            className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                              hubRosterView === tab.id
-                                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
+                        ]}
+                      />
                     </div>
 
                     {loadingHubRoster ? (
@@ -4724,57 +4795,30 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                    {[
+                  <SlidingSegmented
+                    variant="surface"
+                    value={spendingMode}
+                    onChange={setSpendingMode}
+                    options={[
                       { id: 'payroll', label: 'Roster Payrolls' },
                       { id: 'offseason', label: 'Offseason Moves' },
-                    ].map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setSpendingMode(m.id)}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                          spendingMode === m.id
-                            ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                            : 'text-slate-600 dark:text-slate-300'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                    ]}
+                  />
 
                   {spendingMode === 'payroll' ? (
-                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                      {PAYROLL_YEARS.map((yr) => (
-                        <button
-                          key={yr}
-                          onClick={() => setPayrollYear(yr)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                            payrollYear === yr
-                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                          }`}
-                        >
-                          {yr === '2027' ? '2027 Proj' : yr}
-                        </button>
-                      ))}
-                    </div>
+                    <SlidingSegmented
+                      variant="surface"
+                      value={payrollYear}
+                      onChange={setPayrollYear}
+                      options={PAYROLL_YEARS.map((yr) => ({ id: yr, label: yr === '2027' ? '2027 Proj' : yr }))}
+                    />
                   ) : (
-                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                      {['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => (
-                        <button
-                          key={cyc}
-                          onClick={() => setSpendingCycle(cyc)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                            spendingCycle === cyc
-                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                          }`}
-                        >
-                          {cyc}
-                        </button>
-                      ))}
-                    </div>
+                    <SlidingSegmented
+                      variant="surface"
+                      value={spendingCycle}
+                      onChange={setSpendingCycle}
+                      options={['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => ({ id: cyc, label: cyc }))}
+                    />
                   )}
                 </div>
               </div>
@@ -4961,11 +5005,18 @@ export default function App() {
             </div>
           );
         })()}
-        </>
+        </div>
         )}
       </main>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
+        {!selectedPlayer && !compareOpen && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-0 left-0 h-0.5 w-1/6 bg-sky-500 rounded-full hst-sliding-pill"
+            style={{ transform: `translateX(${Math.max(0, MAIN_TAB_ORDER.indexOf(activeTab)) * 100}%)` }}
+          />
+        )}
         {[
           { id: 'feed', label: 'Feed', icon: Flame },
           { id: 'freeAgents', label: 'Agents', icon: Users },
@@ -4975,12 +5026,12 @@ export default function App() {
           { id: 'leaderboard', label: 'Spend', icon: Trophy },
         ].map((item) => {
           const Icon = item.icon;
-          const active = activeTab === item.id;
+          const active = !selectedPlayer && !compareOpen && activeTab === item.id;
           return (
             <button
               key={item.id}
-              onClick={() => { setSelectedPlayer(null); setCompareOpen(false); setActiveTab(item.id); }}
-              className={`flex flex-col items-center gap-0.5 text-[10px] font-bold ${
+              onClick={() => switchMainTab(item.id)}
+              className={`flex flex-col items-center gap-0.5 text-[10px] font-bold transition-colors ${
                 active ? 'text-sky-500' : 'text-slate-400'
               }`}
             >
@@ -5346,26 +5397,18 @@ export default function App() {
                     )}
 
                     {/* Modal Sub-Tabs: Away | Home | Scoring Plays | Highlights */}
-                    <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
-                      {[
+                    <SlidingSegmented
+                      variant="surface"
+                      value={boxScoreTeamTab}
+                      onChange={setBoxScoreTeamTab}
+                      buttonClassName="!px-3.5 !py-1.5"
+                      options={[
                         { id: 'away', label: `${awayInfo.short} Box Score` },
                         { id: 'home', label: `${homeInfo.short} Box Score` },
                         { id: 'scoring', label: `Scoring Plays (${scoringList.length})` },
                         { id: 'highlights', label: `Highlights (${highlightsList.length})` },
-                      ].map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => setBoxScoreTeamTab(t.id)}
-                          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
-                            boxScoreTeamTab === t.id
-                              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
-                              : 'text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
+                      ]}
+                    />
 
                     {/* TAB: EMBEDDED VIDEO HIGHLIGHTS */}
                     {boxScoreTeamTab === 'highlights' ? (
