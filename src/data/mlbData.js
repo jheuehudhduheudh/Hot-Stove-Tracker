@@ -25,7 +25,7 @@ export const MLB_TEAMS = [
   { id: 142, abbr: 'MIN', name: 'Minnesota Twins', short: 'Twins', division: 'AL Central', color: '#002B5C' },
   { id: 143, abbr: 'PHI', name: 'Philadelphia Phillies', short: 'Phillies', division: 'NL East', color: '#E81828' },
   { id: 144, abbr: 'ATL', name: 'Atlanta Braves', short: 'Braves', division: 'NL East', color: '#CE1141' },
-  { id: 145, abbr: 'CWS', name: 'Chicago White Sox', short: 'White Sox', division: 'AL Central', color: '#27251F' },
+  { id: 145, abbr: 'CWS', name: 'Chicago White Sox', short: 'White Sox', division: 'AL Central', color: '#475569' },
   { id: 146, abbr: 'MIA', name: 'Miami Marlins', short: 'Marlins', division: 'NL East', color: '#00A3E0' },
   { id: 147, abbr: 'NYY', name: 'New York Yankees', short: 'Yankees', division: 'AL East', color: '#003087' },
   { id: 158, abbr: 'MIL', name: 'Milwaukee Brewers', short: 'Brewers', division: 'NL Central', color: '#12284B' },
@@ -44,4 +44,17 @@ export function getTeamInfo(abbrOrName) {
         t.short.toLowerCase() === q
     ) || { abbr: abbrOrName.slice(0, 3).toUpperCase(), name: abbrOrName, short: abbrOrName, division: '', color: '#334155' }
   );
+}
+
+export function decodeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ');
 }
