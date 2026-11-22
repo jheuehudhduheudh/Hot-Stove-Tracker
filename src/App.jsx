@@ -98,6 +98,66 @@ function getTeamBadgeStyle(hexColor) {
   };
 }
 
+const MLB_ABBR_TO_ID = {
+  LAA: 108, ARI: 109, BAL: 110, BOS: 111, CHC: 112,
+  CIN: 113, CLE: 114, COL: 115, DET: 116, HOU: 117,
+  KC:  118, LAD: 119, WSH: 120, NYM: 121, ATH: 133,
+  PIT: 134, SD:  135, SEA: 136, SF:  137, STL: 138,
+  TB:  139, TEX: 140, TOR: 141, MIN: 142, PHI: 143,
+  ATL: 144, CWS: 145, MIA: 146, NYY: 147, MIL: 158,
+  // Legacy / alternate abbreviations
+  OAK: 133, WAS: 120, CHW: 145, TBR: 139, SFG: 137, SDP: 135, KCR: 118,
+};
+
+function getMlbTeamId(abbr) {
+  return MLB_ABBR_TO_ID[String(abbr || '').toUpperCase()] || null;
+}
+
+function TeamLogo({ abbr, size = 'md', variant = 'dark', className = '' }) {
+  const [stage, setStage] = useState(0); // 0 = cap-on-dark/light, 1 = generic team-logos, 2 = text fallback
+  const teamId = getMlbTeamId(abbr);
+  const info = getTeamInfo(abbr);
+
+  useEffect(() => {
+    setStage(0);
+  }, [abbr, variant]);
+
+  const sizeMap = {
+    xs: 'w-5 h-5',
+    sm: 'w-6 h-6',
+    md: 'w-7 h-7',
+    lg: 'w-12 h-12',
+    xl: 'w-16 h-16',
+  };
+  const dims = sizeMap[size] || sizeMap.md;
+
+  if (!teamId || stage >= 2) {
+    return (
+      <span
+        className={`inline-flex items-center justify-center rounded-md text-[10px] font-black shrink-0 shadow-sm px-1 ${dims} ${className}`}
+        style={getTeamBadgeStyle(info.color)}
+      >
+        {info.abbr}
+      </span>
+    );
+  }
+
+  const src =
+    stage === 0
+      ? `https://www.mlbstatic.com/team-logos/${variant === 'light' ? 'team-cap-on-light' : 'team-cap-on-dark'}/${teamId}.svg`
+      : `https://www.mlbstatic.com/team-logos/${teamId}.svg`;
+
+  return (
+    <img
+      src={src}
+      alt={info.name}
+      loading="lazy"
+      onError={() => setStage((s) => s + 1)}
+      className={`${dims} object-contain shrink-0 select-none ${className}`}
+    />
+  );
+}
+
 function isFreeAgencyElection(tx) {
   const h = (tx?.headline || '').toLowerCase();
   return h.includes('elected free agency') || h.includes('declared free agency');
@@ -603,11 +663,8 @@ function TeamDropdown({ value, onChange }) {
         }`}
       >
         <span className="flex items-center gap-2.5 min-w-0">
-          <span
-            className="w-9 text-center py-0.5 rounded text-[11px] font-black shadow-sm shrink-0"
-            style={getTeamBadgeStyle(selected.color)}
-          >
-            {selected.abbr}
+          <span className="w-7 h-7 rounded-lg bg-slate-900/90 dark:bg-slate-800/90 border border-slate-700/50 flex items-center justify-center p-1 shrink-0">
+            <TeamLogo abbr={selected.abbr} size="xs" variant="dark" />
           </span>
           <span className="truncate">{selected.name}</span>
         </span>
@@ -657,13 +714,11 @@ function TeamDropdown({ value, onChange }) {
                           }`}
                         >
                           <span className="flex items-center gap-2.5 min-w-0">
-                            <span
-                              className="w-9 text-center py-0.5 rounded text-[10px] font-black shadow-sm shrink-0"
-                              style={getTeamBadgeStyle(t.color)}
-                            >
-                              {t.abbr}
+                            <span className="w-7 h-7 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
+                              <TeamLogo abbr={t.abbr} size="xs" variant="dark" />
                             </span>
                             <span className="text-xs font-bold truncate">{t.name}</span>
+                            <span className="text-[10px] font-bold text-slate-400 shrink-0">{t.abbr}</span>
                           </span>
                           {active && <Check className="w-3.5 h-3.5 text-sky-500 shrink-0" />}
                         </button>
@@ -953,6 +1008,7 @@ export default function App() {
   const [hubRoster, setHubRoster] = useState(null);
   const [loadingHubRoster, setLoadingHubRoster] = useState(false);
   const [hubRosterView, setHubRosterView] = useState('depth');
+  const [hubRosterSearch, setHubRosterSearch] = useState('');
 
   // Spending & Roster Payroll state
   const [spendingMode, setSpendingMode] = useState('payroll');
@@ -1059,6 +1115,7 @@ export default function App() {
     setCompareOpen(false);
     setSelectedGamePk(null);
     setHubTeam(abbr);
+    setHubRosterSearch('');
     setActiveTab('teamHub');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -2303,8 +2360,18 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <div className="relative p-5 text-white" style={{ backgroundColor: tInfo.color }}>
-                          <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-black/30 to-black/15" />
+                        <div
+                          className="relative overflow-hidden p-5 text-white"
+                          style={{ background: `linear-gradient(135deg, ${tInfo.color} 0%, #0f172a 135%)` }}
+                        >
+                          <div className="absolute inset-0 bg-gradient-to-r from-black/40 via-black/20 to-transparent" />
+                          {pl.currentTeamAbbr && (
+                            <TeamLogo
+                              abbr={pl.currentTeamAbbr}
+                              size="xl"
+                              className="pointer-events-none absolute -right-4 -bottom-4 !w-36 !h-36 opacity-[0.14]"
+                            />
+                          )}
                           <div className="relative flex items-start justify-between gap-3">
                             <div className="flex items-center gap-3.5 min-w-0">
                               <button
@@ -2663,10 +2730,17 @@ export default function App() {
 
               {/* Hero Player Bio Banner */}
               <div
-                className="relative overflow-hidden p-6 rounded-2xl text-white shadow-lg"
-                style={{ backgroundColor: teamInfo.color }}
+                className="relative overflow-hidden p-6 rounded-2xl text-white shadow-xl border border-white/10"
+                style={{ background: `linear-gradient(135deg, ${teamInfo.color} 0%, #0f172a 130%)` }}
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/25 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-r from-black/40 via-black/20 to-transparent" />
+                {teamInfo.abbr && teamInfo.abbr !== 'MLB' && (
+                  <TeamLogo
+                    abbr={teamInfo.abbr}
+                    size="xl"
+                    className="pointer-events-none absolute -right-6 -bottom-6 !w-48 !h-48 opacity-[0.13]"
+                  />
+                )}
                 <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-5">
                   <div className="flex items-center gap-4">
                     <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center font-black text-2xl text-white/90">
@@ -4291,11 +4365,8 @@ export default function App() {
                                 }}
                                 className="flex items-center gap-2.5 text-left hover:opacity-85"
                               >
-                                <span
-                                  className="w-10 text-center py-0.5 rounded text-xs font-black shadow-sm"
-                                  style={getTeamBadgeStyle(info.color)}
-                                >
-                                  {info.abbr}
+                                <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0 shadow-sm">
+                                  <TeamLogo abbr={info.abbr} size="sm" />
                                 </span>
                                 <div>
                                   <div className={`text-sm font-bold ${won ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'}`}>
@@ -4408,11 +4479,8 @@ export default function App() {
                                   }`}
                                 >
                                   <td className="py-2.5 pl-4 pr-2 font-bold flex items-center gap-2">
-                                    <span
-                                      className="w-8 text-center py-0.5 rounded text-[10px] font-black shrink-0 shadow-sm"
-                                      style={getTeamBadgeStyle(tInfo.color)}
-                                    >
-                                      {tInfo.abbr}
+                                    <span className="w-6 h-6 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-0.5 shrink-0">
+                                      <TeamLogo abbr={tInfo.abbr} size="xs" />
                                     </span>
                                     <span className="truncate">{tInfo.short}</span>
                                     {t.clinchIndicator && (
@@ -4589,19 +4657,26 @@ export default function App() {
           </div>
         )}
 
-        {/* Team Hub Tab with Live Active Roster, Depth Chart & Injured List */}
+        {/* Team Hub Tab — Broadcast-Quality Clubhouse & Transaction Hub */}
         {activeTab === 'teamHub' && (
           <div className="space-y-4">
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div>
                 <h2 className="text-xl font-extrabold">30-Team Clubhouse &amp; Transaction Hub</h2>
-                <p className="text-xs text-slate-500">Live roster, Injured List, depth chart &amp; offseason moves</p>
+                <p className="text-xs text-slate-500">Official roster, payroll breakdown, Injured List, depth chart &amp; offseason moves</p>
               </div>
-              <TeamDropdown value={hubTeam} onChange={setHubTeam} />
+              <TeamDropdown
+                value={hubTeam}
+                onChange={(abbr) => {
+                  setHubTeam(abbr);
+                  setHubRosterSearch('');
+                }}
+              />
             </div>
 
             {(() => {
               const info = getTeamInfo(hubTeam);
+              const mlbClubId = getMlbTeamId(hubTeam);
               const isDepartureMove = (t) => {
                 const h = (t.headline || '').toLowerCase();
                 return (
@@ -4624,33 +4699,136 @@ export default function App() {
                     t.team_b === hubTeam ||
                     (t.to_team === hubTeam && isDepartureMove(t)))
               );
+
+              // Compute dynamic 2027 MLB Payroll Rank for this club
+              const sortedPayroll27 = Object.entries(TEAM_PAYROLLS['2027'] || {}).sort(
+                (a, b) => (b[1]?.payroll || 0) - (a[1]?.payroll || 0)
+              );
+              const payrollRank27 = sortedPayroll27.findIndex(([abbr]) => abbr === hubTeam) + 1;
+
+              const rosterQuery = hubRosterSearch.trim().toLowerCase();
+              const matchesRosterSearch = (p) =>
+                !rosterQuery ||
+                `${p.fullName} ${p.position} #${p.jerseyNumber || ''}`.toLowerCase().includes(rosterQuery);
+
               return (
                 <div className="space-y-4">
+                  {/* Redesigned Pro Clubhouse Hero Banner */}
                   <div
-                    className="p-6 rounded-2xl text-white flex flex-wrap items-center justify-between gap-4 shadow-lg"
-                    style={{ backgroundColor: info.color }}
+                    className="relative overflow-hidden p-6 sm:p-7 rounded-2xl text-white shadow-xl border border-white/10"
+                    style={{
+                      background: `linear-gradient(135deg, ${info.color} 0%, #0f172a 128%)`,
+                    }}
                   >
-                    <div>
-                      <span className="text-xs uppercase font-bold opacity-85">{info.division}</span>
-                      <h3 className="text-2xl sm:text-3xl font-black">{info.name}</h3>
-                      {hubRoster?.record && (
-                        <p className="text-xs font-bold opacity-90 mt-1">
-                          {hubRoster.record.season} Record: {hubRoster.record.wins}-{hubRoster.record.losses} ({hubRoster.record.pct}) • Div Rank #{hubRoster.record.divRank} • Streak {hubRoster.record.streak}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-5 text-right">
-                      <div>
-                        <div className="text-2xl sm:text-3xl font-black">{hubRoster?.activeCount ?? '—'}</div>
-                        <div className="text-[11px] opacity-90 font-semibold">{hubRoster?.rosterSource || 'Roster'}</div>
+                    {/* Atmospheric Gradient Overlays & Oversized Watermark Logo */}
+                    <div
+                      className="pointer-events-none absolute inset-0"
+                      style={{
+                        background:
+                          'radial-gradient(circle at 12% 18%, rgba(255,255,255,0.18) 0%, transparent 48%), linear-gradient(90deg, rgba(2,6,23,0.42) 0%, rgba(2,6,23,0.18) 55%, rgba(2,6,23,0.52) 100%)',
+                      }}
+                    />
+                    <TeamLogo
+                      abbr={info.abbr}
+                      size="xl"
+                      className="pointer-events-none absolute -right-6 -bottom-8 !w-52 !h-52 sm:!w-64 sm:!h-64 opacity-[0.13]"
+                    />
+
+                    <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                      {/* Left: Glass Logo Medallion + Club Name + Record Pills */}
+                      <div className="flex items-center gap-4 sm:gap-5 min-w-0">
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/10 backdrop-blur-md border border-white/25 p-2.5 sm:p-3 flex items-center justify-center shadow-2xl shrink-0">
+                          <TeamLogo abbr={info.abbr} size="xl" className="!w-full !h-full drop-shadow-lg" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-white/15 backdrop-blur-sm border border-white/15 text-[10px] font-black uppercase tracking-widest">
+                              {info.division}
+                            </span>
+                            {payrollRank27 > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-black/30 text-[10px] font-bold tracking-wide text-white/90">
+                                #{payrollRank27} MLB Payroll
+                              </span>
+                            )}
+                          </div>
+
+                          <h3 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight mt-1 truncate drop-shadow-sm">
+                            {info.name}
+                          </h3>
+
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            {hubRoster?.record && (
+                              <>
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/30 backdrop-blur-sm border border-white/10 text-xs font-extrabold tabular-nums">
+                                  <span className="text-white/70">{hubRoster.record.season}</span>
+                                  <span>{hubRoster.record.wins}-{hubRoster.record.losses}</span>
+                                  <span className="text-sky-300">({hubRoster.record.pct})</span>
+                                </span>
+                                <span className="px-2.5 py-1 rounded-lg bg-black/25 border border-white/10 text-xs font-bold">
+                                  Div #{hubRoster.record.divRank}
+                                </span>
+                                <span className="px-2.5 py-1 rounded-lg bg-black/25 border border-white/10 text-xs font-bold">
+                                  Streak {hubRoster.record.streak}
+                                </span>
+                                {hubRoster.record.runDiff !== undefined && (
+                                  <span
+                                    className={`px-2.5 py-1 rounded-lg bg-black/25 border border-white/10 text-xs font-extrabold tabular-nums ${
+                                      hubRoster.record.runDiff > 0
+                                        ? 'text-emerald-300'
+                                        : hubRoster.record.runDiff < 0
+                                        ? 'text-rose-300'
+                                        : 'text-white/80'
+                                    }`}
+                                  >
+                                    Diff {hubRoster.record.runDiff > 0 ? `+${hubRoster.record.runDiff}` : hubRoster.record.runDiff}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-2xl sm:text-3xl font-black">{hubRoster?.ilCount ?? 0}</div>
-                        <div className="text-[11px] opacity-90 font-semibold">On IL</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl sm:text-3xl font-black">{additions.length}</div>
-                        <div className="text-[11px] opacity-90 font-semibold">Logged Moves</div>
+
+                      {/* Right: Frosted Glass Stat Tiles + Quick Actions */}
+                      <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end justify-between gap-3 shrink-0">
+                        <div className="grid grid-cols-3 gap-2.5">
+                          {[
+                            { val: hubRoster?.activeCount ?? '—', label: hubRoster?.rosterSource || 'Roster' },
+                            { val: hubRoster?.ilCount ?? 0, label: 'On IL' },
+                            { val: additions.length + subtractions.length, label: 'Offseason Moves' },
+                          ].map((tile, idx) => (
+                            <div
+                              key={idx}
+                              className="px-3.5 py-2.5 rounded-xl bg-black/25 backdrop-blur-md border border-white/15 text-center min-w-[84px]"
+                            >
+                              <div className="text-xl sm:text-2xl font-black tabular-nums leading-tight">{tile.val}</div>
+                              <div className="text-[10px] font-bold text-white/75 mt-0.5 whitespace-nowrap">{tile.label}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={copyShareUrl}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
+                          >
+                            {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Share2 className="w-3.5 h-3.5" />}
+                            <span>{copiedLink ? 'Copied!' : 'Share Club'}</span>
+                          </button>
+                          {mlbClubId && (
+                            <a
+                              href={`https://www.mlb.com/team/${mlbClubId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 hover:bg-white/25 backdrop-blur-sm border border-white/15 transition"
+                            >
+                              <span>MLB.com</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -4662,9 +4840,10 @@ export default function App() {
                     const p26 = TEAM_PAYROLLS['2026']?.[hubTeam] || {};
                     const liveTeamAdd = spendingLeaderboard.find((r) => r.team.abbr === hubTeam)?.totalMillions || 0;
                     const cbtDiff27 = p27.cbt ? Number((p27.cbt - CBT_THRESHOLDS['2027']).toFixed(1)) : null;
+                    const maxHistPayroll = Math.max(1, ...history.map((h) => Number(h.payroll || 0)));
 
                     return (
-                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+                      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h4 className="font-extrabold text-base flex items-center gap-2">
@@ -4672,48 +4851,57 @@ export default function App() {
                               <span>{info.short} Roster Payroll &amp; Luxury Tax</span>
                             </h4>
                             <p className="text-xs text-slate-500">
-                              Projected 2027 roster price, contract mix &amp; multi-year payroll history
+                              Projected 2027 roster price, contract mix &amp; 4-year payroll trajectory
                             </p>
                           </div>
-                          {cbtDiff27 !== null && (
-                            <span
-                              className={`px-2.5 py-1 rounded-full text-xs font-extrabold ${
-                                cbtDiff27 > 0
-                                  ? 'bg-rose-500/15 text-rose-500'
-                                  : 'bg-emerald-500/15 text-emerald-500'
-                              }`}
-                            >
-                              {cbtDiff27 > 0
-                                ? `+$${cbtDiff27}M Over $${CBT_THRESHOLDS['2027']}M CBT`
-                                : `$${Math.abs(cbtDiff27)}M Under $${CBT_THRESHOLDS['2027']}M CBT`}
-                            </span>
-                          )}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {payrollRank27 > 0 && (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 tabular-nums">
+                                #{payrollRank27} of 30 MLB
+                              </span>
+                            )}
+                            {cbtDiff27 !== null && (
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-xs font-extrabold tabular-nums ${
+                                  cbtDiff27 > 0
+                                    ? 'bg-rose-500/15 text-rose-500'
+                                    : 'bg-emerald-500/15 text-emerald-500'
+                                }`}
+                              >
+                                {cbtDiff27 > 0
+                                  ? `+$${cbtDiff27}M Over $${CBT_THRESHOLDS['2027']}M CBT`
+                                  : `$${Math.abs(cbtDiff27)}M Under $${CBT_THRESHOLDS['2027']}M CBT`}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2027 Payroll Proj</div>
-                            <div className="text-xl font-black text-emerald-500">${p27.payroll ?? '—'}M</div>
-                            {liveTeamAdd > 0 && (
-                              <div className="text-[10px] font-bold text-sky-500 mt-0.5">+${liveTeamAdd.toFixed(1)}M tracked</div>
+                            <div className="text-xl font-black text-emerald-500 tabular-nums mt-0.5">${p27.payroll ?? '—'}M</div>
+                            {liveTeamAdd > 0 ? (
+                              <div className="text-[10px] font-bold text-sky-500 mt-0.5 tabular-nums">+${liveTeamAdd.toFixed(1)}M tracked</div>
+                            ) : (
+                              <div className="text-[10px] text-slate-500 mt-0.5">Active 40-Man Proj</div>
                             )}
                           </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2027 Luxury Tax</div>
-                            <div className="text-xl font-black">${p27.cbt ?? '—'}M</div>
-                            <div className="text-[10px] text-slate-500">CBT / AAV Basis</div>
+                            <div className="text-xl font-black tabular-nums mt-0.5">${p27.cbt ?? '—'}M</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">CBT / AAV Basis</div>
                           </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2026 Roster Price</div>
-                            <div className="text-xl font-black">${p26.payroll ?? '—'}M</div>
-                            <div className="text-[10px] text-slate-500">2025: ${TEAM_PAYROLLS['2025']?.[hubTeam]?.payroll ?? '—'}M</div>
+                            <div className="text-xl font-black tabular-nums mt-0.5">${p26.payroll ?? '—'}M</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">2025: ${TEAM_PAYROLLS['2025']?.[hubTeam]?.payroll ?? '—'}M</div>
                           </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                             <div className="text-[11px] font-bold text-slate-400">2028–30 Committed</div>
-                            <div className="text-sm font-black mt-1">
+                            <div className="text-sm font-black mt-1 tabular-nums">
                               ${p27.y2028 ?? 0}M / ${p27.y2029 ?? 0}M / ${p27.y2030 ?? 0}M
                             </div>
-                            <div className="text-[10px] text-slate-500">’28 / ’29 / ’30</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">’28 / ’29 / ’30</div>
                           </div>
                         </div>
 
@@ -4721,58 +4909,107 @@ export default function App() {
                           <div className="space-y-1.5">
                             <div className="flex flex-wrap items-center justify-between text-[11px] font-bold text-slate-500">
                               <span>2027 Payroll Allocation</span>
-                              <div className="flex items-center gap-3">
-                                <span className="text-sky-500">Guaranteed {p27.guarPct}%</span>
-                                <span className="text-amber-500">Arb {p27.arbPct}%</span>
-                                <span className="text-emerald-500">Pre-Arb {p27.preArbPct}%</span>
+                              <div className="flex items-center gap-3 tabular-nums">
+                                <span className="inline-flex items-center gap-1 text-sky-500">
+                                  <span className="w-2 h-2 rounded-full bg-sky-500" /> Guaranteed {p27.guarPct}%
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-amber-500">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500" /> Arb {p27.arbPct}%
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-emerald-500">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> Pre-Arb {p27.preArbPct}%
+                                </span>
                               </div>
                             </div>
                             <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
-                              <div className="h-full bg-sky-500" style={{ width: `${p27.guarPct}%` }} />
-                              <div className="h-full bg-amber-500" style={{ width: `${p27.arbPct}%` }} />
-                              <div className="h-full bg-emerald-500" style={{ width: `${p27.preArbPct}%` }} />
+                              <div className="h-full bg-sky-500 animate-bar-grow" style={{ width: `${p27.guarPct}%` }} />
+                              <div className="h-full bg-amber-500 animate-bar-grow" style={{ width: `${p27.arbPct}%` }} />
+                              <div className="h-full bg-emerald-500 animate-bar-grow" style={{ width: `${p27.preArbPct}%` }} />
                             </div>
                           </div>
                         )}
 
-                        <div className="grid grid-cols-4 gap-2 pt-1">
-                          {history.map((h) => (
-                            <div
-                              key={h.year}
-                              className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 text-center"
-                            >
-                              <div className="text-[10px] font-bold text-slate-400">{h.year === '2027' ? '2027 Proj' : h.year}</div>
-                              <div className="text-xs sm:text-sm font-black">${Number(h.payroll || 0).toFixed(1)}M</div>
-                            </div>
-                          ))}
+                        {/* 4-Year Visual Payroll Trend Cards */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                          {history.map((h) => {
+                            const barPct = Math.max(12, (Number(h.payroll || 0) / maxHistPayroll) * 100);
+                            return (
+                              <div
+                                key={h.year}
+                                className="px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-1.5"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-slate-400">
+                                    {h.year === '2027' ? '2027 Proj' : h.year}
+                                  </span>
+                                  <span className="text-xs sm:text-sm font-black tabular-nums">
+                                    ${Number(h.payroll || 0).toFixed(1)}M
+                                  </span>
+                                </div>
+                                <div className="h-1.5 w-full rounded-full bg-slate-200/80 dark:bg-slate-800 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full animate-bar-grow"
+                                    style={{ width: `${barPct}%`, backgroundColor: info.color }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
                   })()}
 
                   {/* Live Active Roster / Depth Chart & Injured List */}
-                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h4 className="font-extrabold text-base flex items-center gap-2">
-                          <Shield className="w-4 h-4 text-sky-500" />
-                          <span>{info.short} Live Roster &amp; Injured List</span>
-                        </h4>
-                        <p className="text-xs text-slate-500">
-                          Click any player for full year-by-year MLB career stats
-                        </p>
+                  <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
+                          <TeamLogo abbr={info.abbr} size="sm" />
+                        </span>
+                        <div>
+                          <h4 className="font-extrabold text-base">
+                            {info.short} Live Roster &amp; Injured List
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            Click any player for full career stats, splits &amp; Baseball Savant profile
+                          </p>
+                        </div>
                       </div>
 
-                      <SlidingSegmented
-                        variant="surface"
-                        value={hubRosterView}
-                        onChange={setHubRosterView}
-                        options={[
-                          { id: 'depth', label: 'Depth Chart' },
-                          { id: 'il', label: `Injured List (${hubRoster?.ilCount ?? 0})` },
-                          { id: 'all', label: `Full Roster (${hubRoster?.activeCount ?? 0})` },
-                        ]}
-                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative w-44 sm:w-52">
+                          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="text"
+                            value={hubRosterSearch}
+                            onChange={(e) => setHubRosterSearch(e.target.value)}
+                            placeholder={`Filter ${info.short} roster...`}
+                            className="w-full pl-8 pr-7 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                          />
+                          {hubRosterSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setHubRosterSearch('')}
+                              aria-label="Clear roster search"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+
+                        <SlidingSegmented
+                          variant="surface"
+                          value={hubRosterView}
+                          onChange={setHubRosterView}
+                          options={[
+                            { id: 'depth', label: 'Depth Chart' },
+                            { id: 'il', label: `Injured List (${hubRoster?.ilCount ?? 0})` },
+                            { id: 'all', label: `Full Roster (${hubRoster?.activeCount ?? 0})` },
+                          ]}
+                        />
+                      </div>
                     </div>
 
                     {loadingHubRoster ? (
@@ -4780,13 +5017,15 @@ export default function App() {
                     ) : !hubRoster ? (
                       <div className="text-center py-8 text-xs text-slate-400">Roster data unavailable right now.</div>
                     ) : hubRosterView === 'il' ? (
-                      hubRoster.injuredList.length === 0 ? (
+                      hubRoster.injuredList.filter(matchesRosterSearch).length === 0 ? (
                         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 text-xs text-slate-500 text-center">
-                          No players currently listed on the {info.short} Injured List.
+                          {rosterQuery
+                            ? `No Injured List players match "${hubRosterSearch}".`
+                            : `No players currently listed on the ${info.short} Injured List.`}
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                          {hubRoster.injuredList.map((p) => (
+                          {hubRoster.injuredList.filter(matchesRosterSearch).map((p) => (
                             <button
                               key={p.playerId}
                               type="button"
@@ -4814,44 +5053,66 @@ export default function App() {
                           { key: 'IF', label: 'Infielders' },
                           { key: 'OF', label: 'Outfielders' },
                           { key: 'P', label: 'Pitchers' },
-                        ].map((grp) => (
-                          <div key={grp.key} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-2">
-                            <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-                              <span>{grp.label}</span>
-                              <span>{(hubRoster.depthChart?.[grp.key] || []).length}</span>
+                        ].map((grp) => {
+                          const playersInGrp = (hubRoster.depthChart?.[grp.key] || []).filter(matchesRosterSearch);
+                          return (
+                            <div key={grp.key} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-2">
+                              <div className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between pb-1 border-b border-slate-200/70 dark:border-slate-800/80">
+                                <span>{grp.label}</span>
+                                <span className="px-1.5 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-[10px] font-black tabular-nums">
+                                  {playersInGrp.length}
+                                </span>
+                              </div>
+                              <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                                {playersInGrp.length === 0 ? (
+                                  <div className="py-4 text-center text-[11px] text-slate-400">No matches</div>
+                                ) : (
+                                  playersInGrp.map((p) => (
+                                    <button
+                                      key={p.playerId}
+                                      type="button"
+                                      onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
+                                      className="w-full flex items-center justify-between gap-2 text-xs p-1.5 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/80 text-left transition group"
+                                    >
+                                      <span className="flex items-center gap-2 min-w-0">
+                                        <img
+                                          src={`https://midfield.mlbstatic.com/v1/people/${p.playerId}/spots/60`}
+                                          alt={p.fullName}
+                                          loading="lazy"
+                                          onError={(e) => {
+                                            e.currentTarget.style.display = 'none';
+                                          }}
+                                          className="w-6 h-6 rounded-full object-cover bg-slate-200 dark:bg-slate-800 shrink-0"
+                                          style={{ border: `1.5px solid ${info.color}` }}
+                                        />
+                                        <span className="font-bold truncate group-hover:text-sky-500 transition">
+                                          {p.jerseyNumber ? <span className="text-slate-400 font-semibold mr-1 tabular-nums">#{p.jerseyNumber}</span> : null}
+                                          {p.fullName}
+                                        </span>
+                                      </span>
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shrink-0">
+                                        {p.position}
+                                      </span>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
                             </div>
-                            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                              {(hubRoster.depthChart?.[grp.key] || []).map((p) => (
-                                <button
-                                  key={p.playerId}
-                                  type="button"
-                                  onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
-                                  className="w-full flex items-center justify-between text-xs p-1.5 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/80 text-left transition"
-                                >
-                                  <span className="font-bold truncate">
-                                    {p.jerseyNumber ? `#${p.jerseyNumber} ` : ''}{p.fullName}
-                                  </span>
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ml-1 shrink-0">
-                                    {p.position}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                        {hubRoster.activePlayers.map((p) => (
+                        {hubRoster.activePlayers.filter(matchesRosterSearch).map((p) => (
                           <button
                             key={p.playerId}
                             type="button"
                             onClick={() => openPlayerModal(p.playerId, p.fullName, hubTeam)}
-                            className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 hover:border-sky-500/40 flex items-center gap-2.5 text-left transition"
+                            className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 hover:border-sky-500/40 flex items-center gap-2.5 text-left transition group"
                           >
                             <PlayerAvatar playerId={p.playerId} playerName={p.fullName} teamAbbr={hubTeam} size="sm" />
                             <div className="min-w-0">
-                              <div className="text-xs font-bold truncate">
+                              <div className="text-xs font-bold truncate group-hover:text-sky-500 transition">
                                 {p.jerseyNumber ? `#${p.jerseyNumber} ` : ''}{p.fullName}
                               </div>
                               <div className="text-[11px] text-slate-500">
@@ -4864,28 +5125,45 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* Additions & Departures Columns with Player Avatars */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <h4 className="font-extrabold text-sm uppercase tracking-wider text-emerald-500 mb-3">
-                        Additions &amp; Club Activity ({additions.length})
-                      </h4>
+                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-extrabold text-sm uppercase tracking-wider text-emerald-500">
+                          Additions &amp; Club Activity
+                        </h4>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/15 text-emerald-500 tabular-nums">
+                          {additions.length}
+                        </span>
+                      </div>
                       {additions.length === 0 ? (
-                        <p className="text-xs text-slate-400">No logged moves yet.</p>
+                        <p className="text-xs text-slate-400">No logged additions yet.</p>
                       ) : (
                         <ul className="space-y-2.5 text-sm">
                           {additions.map((a) => (
                             <li
                               key={a.id}
                               onClick={() => a.player_id && openPlayerModal(a.player_id, a.player_name, hubTeam)}
-                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 ${
-                                a.player_id ? 'cursor-pointer hover:border-sky-500/40' : ''
+                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
+                                a.player_id ? 'cursor-pointer hover:border-emerald-500/40' : ''
                               }`}
                             >
-                              <div className="font-bold">{decodeHtml(a.headline)}</div>
-                              <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-                                <span>{a.status}</span>
-                                <span>•</span>
-                                <span>{new Date(a.reported_at).toLocaleDateString()}</span>
+                              <PlayerAvatar playerId={a.player_id} playerName={a.player_name} teamAbbr={hubTeam} size="sm" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-xs sm:text-sm leading-snug">{decodeHtml(a.headline)}</div>
+                                <div className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 font-bold text-[10px]">
+                                    {a.status}
+                                  </span>
+                                  <span>•</span>
+                                  <span>{new Date(a.reported_at).toLocaleDateString()}</span>
+                                  {a.total_value_millions > 0 && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="font-extrabold text-sky-500">${a.total_value_millions}M</span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </li>
                           ))}
@@ -4893,10 +5171,15 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <h4 className="font-extrabold text-sm uppercase tracking-wider text-rose-500 mb-3">
-                        Departures &amp; Releases ({subtractions.length})
-                      </h4>
+                    <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-extrabold text-sm uppercase tracking-wider text-rose-500">
+                          Departures &amp; Releases
+                        </h4>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-500/15 text-rose-500 tabular-nums">
+                          {subtractions.length}
+                        </span>
+                      </div>
                       {subtractions.length === 0 ? (
                         <p className="text-xs text-slate-400">No logged departures yet.</p>
                       ) : (
@@ -4905,15 +5188,20 @@ export default function App() {
                             <li
                               key={s.id}
                               onClick={() => s.player_id && openPlayerModal(s.player_id, s.player_name, hubTeam)}
-                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 ${
-                                s.player_id ? 'cursor-pointer hover:border-sky-500/40' : ''
+                              className={`p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 flex items-start gap-3 transition ${
+                                s.player_id ? 'cursor-pointer hover:border-rose-500/40' : ''
                               }`}
                             >
-                              <div className="font-bold">{decodeHtml(s.headline)}</div>
-                              <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
-                                <span>{s.status}</span>
-                                <span>•</span>
-                                <span>{new Date(s.reported_at).toLocaleDateString()}</span>
+                              <PlayerAvatar playerId={s.player_id} playerName={s.player_name} teamAbbr={hubTeam} size="sm" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-xs sm:text-sm leading-snug">{decodeHtml(s.headline)}</div>
+                                <div className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 font-bold text-[10px]">
+                                    {s.status}
+                                  </span>
+                                  <span>•</span>
+                                  <span>{new Date(s.reported_at).toLocaleDateString()}</span>
+                                </div>
                               </div>
                             </li>
                           ))}
@@ -5066,12 +5354,9 @@ export default function App() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2.5 min-w-0">
-                                <span className="w-6 text-xs font-black text-slate-400 shrink-0">#{idx + 1}</span>
-                                <span
-                                  className="w-10 text-center py-0.5 rounded text-xs font-black shrink-0 shadow-sm"
-                                  style={getTeamBadgeStyle(row.team.color)}
-                                >
-                                  {row.team.abbr}
+                                <span className="w-6 text-xs font-black text-slate-400 shrink-0 tabular-nums">#{idx + 1}</span>
+                                <span className="w-8 h-8 rounded-xl bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
+                                  <TeamLogo abbr={row.team.abbr} size="sm" />
                                 </span>
                                 <div className="min-w-0">
                                   <div className="font-bold text-sm truncate flex items-center gap-1.5">
@@ -5483,11 +5768,8 @@ export default function App() {
                               onClick={() => openTeamHub(row.info.abbr)}
                               className="flex items-center gap-2.5 hover:opacity-85"
                             >
-                              <span
-                                className="w-11 text-center py-0.5 rounded text-xs font-black shadow-sm"
-                                style={getTeamBadgeStyle(row.info.color)}
-                              >
-                                {row.info.abbr}
+                              <span className="w-9 h-9 rounded-xl bg-slate-900/90 dark:bg-slate-900 border border-slate-700/50 flex items-center justify-center p-1.5 shrink-0 shadow-sm">
+                                <TeamLogo abbr={row.info.abbr} size="sm" />
                               </span>
                               <span className="font-extrabold text-sm sm:text-base">{row.info.name}</span>
                             </button>
