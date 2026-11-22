@@ -52,7 +52,7 @@ async function lookupPlayerId(playerName) {
 function parseRssItems(xml) {
   const items = [];
   const itemBlocks = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
-  for (const block of itemBlocks.slice(0, 25)) {
+  for (const block of itemBlocks.slice(0, 30)) {
     const title = (block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1] ||
       block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '').trim();
     const link = (block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '').trim();
@@ -61,8 +61,8 @@ function parseRssItems(xml) {
       .map((m) => m[1].trim().toLowerCase());
 
     const isTransaction =
-      categories.some((c) => ['signings', 'trades', 'extensions', 'transactions'].includes(c)) ||
-      /(agree|sign|acquire|trade|extend)/i.test(title);
+      categories.some((c) => ['signings', 'trades', 'extensions', 'transactions', 'designations', 'waivers'].includes(c)) ||
+      /(agree|sign|acquire|trade|extend|designate|claim)/i.test(title);
 
     if (!isTransaction || !title) continue;
 
@@ -71,6 +71,8 @@ function parseRssItems(xml) {
       ? 'TRADE'
       : categories.includes('extensions') || /extend/i.test(title)
       ? 'EXTENSION'
+      : /designate|waiver|claim/i.test(title)
+      ? 'DFA_WAIVER'
       : 'SIGNING';
 
     const team = detectTeam(title);
@@ -78,7 +80,7 @@ function parseRssItems(xml) {
 
     let playerName = null;
     const agreeMatch = title.match(/^[A-Za-z\s]+,\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)\s+Agree/i);
-    const signMatch = title.match(/(?:Sign|Acquire|Extend)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/i);
+    const signMatch = title.match(/(?:Sign|Acquire|Extend|Designate|Claim)\s+([A-Z][a-zA-Z.'-]+\s+[A-Z][a-zA-Z.'-]+(?:\s+Jr\.|\s+Sr\.|\s+III)?)/i);
     if (agreeMatch) playerName = agreeMatch[1].trim();
     else if (signMatch) playerName = signMatch[1].trim();
 
@@ -112,11 +114,15 @@ export default async function handler(req, res) {
   const force = req.query?.force === 'true' || req.body?.force === true;
 
   // 1. Check 5-minute cooldown
-  const { data: meta } = await supabase
+  const { data: meta, error: metaError } = await supabase
     .from('sync_metadata')
     .select('*')
     .eq('id', 1)
-    .single();
+    .maybeSingle();
+
+  if (metaError) {
+    return res.status(500).json({ error: `Supabase connection error: ${metaError.message}` });
+  }
 
   if (!force && meta?.last_synced_at) {
     const elapsedMs = Date.now() - new Date(meta.last_synced_at).getTime();
@@ -138,7 +144,7 @@ export default async function handler(req, res) {
   // 2. Fetch & Parse MLB Trade Rumors RSS (Stage 1: REPORTED)
   try {
     const rssRes = await fetch('https://www.mlbtraderumors.com/feed', {
-      headers: { 'User-Agent': 'HotStoveTracker/1.0' },
+      headers: { 'User-Agent': 'HotStoveTracker/1.1' },
     });
     if (rssRes.ok) {
       const xml = await rssRes.text();
@@ -153,13 +159,13 @@ export default async function handler(req, res) {
 
         if (!existing) {
           const person = await lookupPlayerId(item.player_name);
-          await supabase.from('transactions').insert({
+          const { error: insertErr } = await supabase.from('transactions').insert({
             ...item,
             status: 'REPORTED',
             player_id: person?.id || null,
             position: person?.position || null,
           });
-          addedCount++;
+          if (!insertErr) addedCount++;
         }
       }
     }
@@ -167,10 +173,10 @@ export default async function handler(req, res) {
     console.error('RSS sync warning:', err.message);
   }
 
-  // 3. Fetch Official MLB Stats API Transactions (Stage 2: OFFICIAL)
+  // 3. Fetch Official MLB Stats API Transactions (last 14 days, Stage 2: OFFICIAL)
   try {
     const end = new Date();
-    const start = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().slice(0, 10);
 
     const mlbRes = await fetch(
@@ -188,19 +194,19 @@ export default async function handler(req, res) {
           const key = tx.tradeId || `${tx.date}-${tx.description}`;
           if (!tradeGroups.has(key)) tradeGroups.set(key, []);
           tradeGroups.get(key).push(tx);
-        } else if (['SFA', 'ASG', 'CLW', 'DFA', 'OPT'].includes(tx.typeCode)) {
+        } else if (['SFA', 'SGN', 'ASG', 'CLW', 'DFA', 'OPT', 'REL', 'NUM'].includes(tx.typeCode)) {
           singleTx.push(tx);
         }
       }
 
-      for (const tx of singleTx.slice(-40)) {
+      for (const tx of singleTx.slice(-80)) {
         const extId = `mlb-tx-${tx.id}`;
         const playerName = tx.person?.fullName || 'Unknown Player';
         const toTeam = detectTeam(tx.toTeam?.name || '');
         const fromTeam = detectTeam(tx.fromTeam?.name || '');
         const desc = tx.description || `${tx.toTeam?.name || 'MLB'} transaction involving ${playerName}`;
         const isMinor = /minor league/i.test(desc);
-        const moveType = ['DFA', 'CLW'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
+        const moveType = ['DFA', 'CLW', 'REL', 'NUM'].includes(tx.typeCode) ? 'DFA_WAIVER' : 'SIGNING';
 
         if (toTeam && playerName) {
           const { data: matchingReported } = await supabase
@@ -234,7 +240,7 @@ export default async function handler(req, res) {
           .maybeSingle();
 
         if (!exists) {
-          await supabase.from('transactions').insert({
+          const { error: insertErr } = await supabase.from('transactions').insert({
             external_id: extId,
             status: 'OFFICIAL',
             move_type: moveType,
@@ -249,7 +255,7 @@ export default async function handler(req, res) {
             from_team: fromTeam,
             to_team: toTeam,
           });
-          addedCount++;
+          if (!insertErr) addedCount++;
         }
       }
 
@@ -285,7 +291,7 @@ export default async function handler(req, res) {
           else teamBReceives.push(entry);
         }
 
-        await supabase.from('transactions').insert({
+        const { error: insertErr } = await supabase.from('transactions').insert({
           external_id: extId,
           status: 'OFFICIAL',
           move_type: 'TRADE',
@@ -302,7 +308,7 @@ export default async function handler(req, res) {
           team_b: teamB,
           team_b_receives: teamBReceives,
         });
-        addedCount++;
+        if (!insertErr) addedCount++;
       }
     }
   } catch (err) {

@@ -5,10 +5,7 @@ import {
   Plus, X, Edit3, ShieldAlert, ArrowLeftRight, Sparkles, Database
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import {
-  MLB_TEAMS, DIVISIONS, getTeamInfo,
-  FALLBACK_TRANSACTIONS, FALLBACK_FREE_AGENTS
-} from './data/mlbData';
+import { MLB_TEAMS, DIVISIONS, getTeamInfo } from './data/mlbData';
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
   const [imgError, setImgError] = useState(false);
@@ -65,7 +62,8 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('feed');
   const [transactions, setTransactions] = useState([]);
-  const [freeAgents, setFreeAgents] = useState(FALLBACK_FREE_AGENTS);
+  const [freeAgents, setFreeAgents] = useState([]);
+  const [loadingFreeAgents, setLoadingFreeAgents] = useState(true);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -120,6 +118,8 @@ export default function App() {
         if (meta?.last_synced_at) setLastSyncedAt(meta.last_synced_at);
         setLoading(false);
         return;
+      } else if (error) {
+        setSyncNotice(`Supabase read error: ${error.message}`);
       }
     }
 
@@ -127,31 +127,43 @@ export default function App() {
     if (localCached) {
       setTransactions(JSON.parse(localCached));
     } else {
-      setTransactions(FALLBACK_TRANSACTIONS);
+      setTransactions([]);
     }
     setLoading(false);
   };
 
   const fetchFreeAgents = async () => {
-    try {
-      const res = await fetch('https://statsapi.mlb.com/api/v1/people/freeAgents');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data?.freeAgents) && data.freeAgents.length > 0) {
-        const mapped = data.freeAgents.slice(0, 60).map((fa) => ({
-          playerId: fa.player?.id,
-          fullName: fa.player?.fullName || 'Unknown Player',
-          position: fa.position?.abbreviation || 'MLB',
-          age: fa.player?.currentAge || '—',
-          lastTeam: getTeamInfo(fa.originalTeam?.name || '').abbr,
-          statLine: 'MLB Free Agent',
-          tier: 'Available',
-        }));
-        setFreeAgents(mapped);
+    setLoadingFreeAgents(true);
+    const currentYear = new Date().getFullYear();
+    const seasonsToTry = [currentYear + 1, currentYear];
+
+    for (const season of seasonsToTry) {
+      try {
+        const res = await fetch(`https://statsapi.mlb.com/api/v1/people/freeAgents?season=${season}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (Array.isArray(data?.freeAgents) && data.freeAgents.length > 0) {
+          const mapped = data.freeAgents
+            .filter((fa) => !fa.newTeam)
+            .slice(0, 100)
+            .map((fa) => ({
+              playerId: fa.player?.id,
+              fullName: fa.player?.fullName || 'Unknown Player',
+              position: fa.position?.abbreviation || 'MLB',
+              age: fa.player?.currentAge || '—',
+              lastTeam: getTeamInfo(fa.originalTeam?.name || '').abbr,
+              statLine: `${season} MLB Free Agent`,
+              tier: 'Available',
+            }));
+          setFreeAgents(mapped);
+          setLoadingFreeAgents(false);
+          return;
+        }
+      } catch {
+        // Try next season fallback
       }
-    } catch {
-      // Keep built-in fallback list
     }
+    setLoadingFreeAgents(false);
   };
 
   useEffect(() => {
@@ -164,8 +176,8 @@ export default function App() {
     setSyncNotice('');
     try {
       const res = await fetch(`/api/sync${force ? '?force=true' : ''}`, { method: 'POST' });
+      const result = await res.json().catch(() => ({}));
       if (res.ok) {
-        const result = await res.json();
         if (result.skipped) {
           setSyncNotice(`Already up to date (cooldown: ${result.remainingSeconds}s left)`);
         } else {
@@ -173,11 +185,10 @@ export default function App() {
           await fetchTransactions();
         }
       } else {
-        throw new Error('Local preview mode');
+        setSyncNotice(result.error || `Sync failed (HTTP ${res.status})`);
       }
-    } catch {
-      setLastSyncedAt(new Date().toISOString());
-      setSyncNotice('Preview mode: connect Supabase + Vercel for live RSS/MLB API sync');
+    } catch (err) {
+      setSyncNotice(`Sync network error: ${err.message}`);
     } finally {
       setSyncing(false);
     }
@@ -299,12 +310,11 @@ export default function App() {
       if (res.ok) {
         await fetchTransactions();
       } else {
-        throw new Error('Local fallback');
+        const errData = await res.json().catch(() => ({}));
+        setSyncNotice(errData.error || 'Admin update failed');
       }
-    } catch {
-      const updated = transactions.map((t) => (t.id === editingTx.id ? { ...t, ...updates } : t));
-      setTransactions(updated);
-      localStorage.setItem('hst_demo_transactions', JSON.stringify(updated));
+    } catch (err) {
+      setSyncNotice(`Admin update error: ${err.message}`);
     }
     setEditingTx(null);
   };
@@ -341,12 +351,11 @@ export default function App() {
       if (res.ok) {
         await fetchTransactions();
       } else {
-        throw new Error('Local fallback');
+        const errData = await res.json().catch(() => ({}));
+        setSyncNotice(errData.error || 'Admin create failed');
       }
-    } catch {
-      const created = [{ id: `local-${Date.now()}`, ...newTx }, ...transactions];
-      setTransactions(created);
-      localStorage.setItem('hst_demo_transactions', JSON.stringify(created));
+    } catch (err) {
+      setSyncNotice(`Admin create error: ${err.message}`);
     }
     setNewMoveModalOpen(false);
   };
@@ -642,6 +651,23 @@ export default function App() {
 
             {loading ? (
               <div className="text-center py-16 text-slate-400 text-sm">Loading MLB transactions...</div>
+            ) : transactions.length === 0 ? (
+              <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
+                <p className="font-bold text-base text-slate-700 dark:text-slate-200">
+                  No MLB transactions in your database yet
+                </p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Click the button below to pull live MLB Trade Rumors reports and official MLB Stats API transactions into Supabase.
+                </p>
+                <button
+                  onClick={() => handleSyncNow(true)}
+                  disabled={syncing}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white shadow"
+                >
+                  <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                  <span>{syncing ? 'Syncing Live MLB Data...' : 'Pull Live MLB Moves Now'}</span>
+                </button>
+              </div>
             ) : filteredTransactions.length === 0 ? (
               <div className="text-center py-16 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
                 <p className="font-semibold text-slate-500">No transactions match your current filters.</p>
@@ -651,10 +677,11 @@ export default function App() {
                     setStatusFilter('ALL');
                     setTypeFilter('ALL');
                     setSearchQuery('');
+                    setMajorLeagueOnly(false);
                   }}
                   className="mt-2 text-xs font-bold text-sky-500 hover:underline"
                 >
-                  Reset all filters
+                  Reset all filters (including Minor League moves)
                 </button>
               </div>
             ) : (
@@ -705,7 +732,18 @@ export default function App() {
                         </div>
 
                         <div className="flex items-center gap-2 text-xs text-slate-400">
-                          <span>{tx.source_name}</span>
+                          {tx.source_url ? (
+                            <a
+                              href={tx.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:text-sky-400 underline"
+                            >
+                              {tx.source_name}
+                            </a>
+                          ) : (
+                            <span>{tx.source_name}</span>
+                          )}
                           <span>•</span>
                           <span>{new Date(tx.reported_at).toLocaleDateString()}</span>
                           {isAdmin && (
@@ -840,11 +878,11 @@ export default function App() {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
-                <h2 className="text-xl font-extrabold">Best Available Free Agents</h2>
-                <p className="text-xs text-slate-500">Unsigned players remaining on the open market</p>
+                <h2 className="text-xl font-extrabold">MLB Free Agents (Live MLB Stats API)</h2>
+                <p className="text-xs text-slate-500">Unsigned players currently listed by MLB Stats API</p>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {['ALL', 'SP', 'RP', 'C', 'SS', 'OF', 'DH'].map((pos) => (
+                {['ALL', 'P', 'C', '1B', '2B', '3B', 'SS', 'OF', 'DH'].map((pos) => (
                   <button
                     key={pos}
                     onClick={() => setFaPositionFilter(pos)}
@@ -860,38 +898,46 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {freeAgents
-                .filter((fa) => faPositionFilter === 'ALL' || fa.position === faPositionFilter)
-                .map((fa, idx) => (
-                  <div
-                    key={fa.playerId || idx}
-                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <PlayerAvatar
-                        playerId={fa.playerId}
-                        playerName={fa.fullName}
-                        teamAbbr={fa.lastTeam}
-                      />
-                      <div>
-                        <div className="font-bold text-base flex items-center gap-2">
-                          <span>{fa.fullName}</span>
-                          <span className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">
-                            {fa.position}
-                          </span>
+            {loadingFreeAgents ? (
+              <div className="text-center py-12 text-sm text-slate-400">Fetching live MLB free agent list...</div>
+            ) : freeAgents.length === 0 ? (
+              <div className="text-center py-12 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 text-sm text-slate-400">
+                No unsigned free agents returned by MLB Stats API right now.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {freeAgents
+                  .filter((fa) => faPositionFilter === 'ALL' || fa.position === faPositionFilter)
+                  .map((fa, idx) => (
+                    <div
+                      key={fa.playerId || idx}
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <PlayerAvatar
+                          playerId={fa.playerId}
+                          playerName={fa.fullName}
+                          teamAbbr={fa.lastTeam}
+                        />
+                        <div>
+                          <div className="font-bold text-base flex items-center gap-2">
+                            <span>{fa.fullName}</span>
+                            <span className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">
+                              {fa.position}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Age {fa.age} • Prev: {fa.lastTeam} • {fa.statLine}
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Age {fa.age} • Prev: {fa.lastTeam} • {fa.statLine}
-                        </p>
                       </div>
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                        {fa.tier}
+                      </span>
                     </div>
-                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-600 dark:text-amber-300">
-                      {fa.tier}
-                    </span>
-                  </div>
-                ))}
-            </div>
+                  ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1111,7 +1157,7 @@ export default function App() {
               type="password"
               value={adminPassword}
               onChange={(e) => setAdminPassword(e.target.value)}
-              placeholder="Enter ADMIN_PASSWORD (default: admin)"
+              placeholder="Enter ADMIN_PASSWORD"
               className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent mb-3"
             />
             <button
@@ -1196,7 +1242,7 @@ export default function App() {
             <input
               name="headline"
               required
-              placeholder="Headline (e.g., Yankees Sign Bo Bichette to 6-Year, $180M Deal)"
+              placeholder="Headline"
               className="w-full px-3 py-2 rounded-xl text-sm border border-slate-300 dark:border-slate-700 bg-transparent"
             />
             <div className="grid grid-cols-2 gap-2">
