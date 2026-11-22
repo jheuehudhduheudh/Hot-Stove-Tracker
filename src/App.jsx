@@ -1095,8 +1095,6 @@ export default function App() {
   const [loadingBoxScore, setLoadingBoxScore] = useState(false);
   const [refreshingBoxScore, setRefreshingBoxScore] = useState(false);
   const [boxScoreTeamTab, setBoxScoreTeamTab] = useState('away');
-  const [activeHighlight, setActiveHighlight] = useState(null);
-  const [videoError, setVideoError] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [recentPlayers, setRecentPlayers] = useState(() => {
@@ -1219,8 +1217,6 @@ export default function App() {
     if (!silent) {
       setSelectedGamePk(gamePk);
       setBoxScore(null);
-      setActiveHighlight(null);
-      setVideoError(false);
       setBoxScoreTeamTab(initialTab || 'away');
       setLoadingBoxScore(true);
     } else {
@@ -1231,9 +1227,6 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setBoxScore(data);
-        if (!silent && data?.highlights?.length > 0) {
-          setActiveHighlight(data.highlights[0]);
-        }
       }
     } catch {
       if (!silent) setBoxScore(null);
@@ -5493,6 +5486,22 @@ export default function App() {
         )}
       </main>
 
+      <footer className="max-w-[1440px] mx-auto px-4 sm:px-6 mt-12 pb-6">
+        <div className="pt-5 border-t border-slate-200/80 dark:border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+          <div className="space-y-1">
+            <p className="font-semibold text-slate-600 dark:text-slate-300">
+              Hot Stove Tracker — Free, Unofficial Non-Commercial MLB Fan Dashboard
+            </p>
+            <p className="leading-relaxed max-w-3xl">
+              Not affiliated with, endorsed by, or sponsored by Major League Baseball, MLB Advanced Media, L.P., or the MLBPA. Statistical data provided via MLB Stats API &amp; Baseball Savant; team payroll estimates compiled from public FanGraphs, Spotrac, and AP reports. All video links open directly on MLB.com.
+            </p>
+          </div>
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+            For Personal &amp; Fan Use Only
+          </div>
+        </div>
+      </footer>
+
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
         {!selectedPlayer && !compareOpen && (
           <span
@@ -5808,32 +5817,59 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Quick Watch Highlights Callout Banner (when highlights exist & not already on Highlights tab) */}
-                    {featuredRecap && boxScoreTeamTab !== 'highlights' && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveHighlight(featuredRecap);
-                          setVideoError(false);
-                          setBoxScoreTeamTab('highlights');
-                        }}
-                        className="w-full p-3 rounded-2xl border border-rose-500/25 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-sky-500/10 hover:border-rose-500/50 flex items-center justify-between gap-3 text-left transition"
+                    {/* Quick Watch Highlights Callout Banner — Direct Outbound Link to MLB.com */}
+                    {featuredRecap && (
+                      <a
+                        href={featuredRecap.mlbUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group relative overflow-hidden w-full p-3 sm:p-3.5 rounded-2xl border border-rose-500/30 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-sky-500/10 hover:border-rose-500/60 hover:shadow-lg hover:shadow-rose-500/10 flex items-center justify-between gap-3.5 text-left transition-all"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow">
-                            <Play className="w-4 h-4 fill-current ml-0.5" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[10px] font-black uppercase text-rose-500">
-                              {featuredRecap.isRecap ? 'Official Game Recap & Highlights Ready' : `${highlightsList.length} Official MLB Video Highlights`}
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          {featuredRecap.thumbnail ? (
+                            <div className="relative w-20 sm:w-24 aspect-video rounded-xl overflow-hidden bg-slate-900 border border-white/15 shrink-0 shadow-md">
+                              <img
+                                src={featuredRecap.thumbnail}
+                                alt={featuredRecap.headline}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                              <div className="absolute inset-0 bg-black/35 group-hover:bg-black/20 flex items-center justify-center transition">
+                                <span className="w-7 h-7 rounded-full bg-rose-600/95 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                                </span>
+                              </div>
                             </div>
-                            <div className="text-xs sm:text-sm font-bold truncate">{featuredRecap.headline}</div>
+                          ) : (
+                            <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                              <Play className="w-4 h-4 fill-current ml-0.5" />
+                            </div>
+                          )}
+
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">
+                                {featuredRecap.isRecap ? 'Official Game Recap' : 'Featured Highlight'}
+                              </span>
+                              {featuredRecap.duration && (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-900/10 dark:bg-white/10 text-[10px] font-bold text-slate-600 dark:text-slate-300 tabular-nums">
+                                  {featuredRecap.duration}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs sm:text-sm font-extrabold truncate group-hover:text-rose-500 dark:group-hover:text-rose-400 transition-colors mt-0.5">
+                              {featuredRecap.headline}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block truncate">
+                              Opens official video on MLB.com{highlightsList.length > 1 ? ` • ${highlightsList.length} clips in Highlights tab` : ''}
+                            </div>
                           </div>
                         </div>
-                        <span className="px-3 py-1 rounded-xl text-xs font-extrabold bg-rose-600 text-white shrink-0">
-                          Watch ({highlightsList.length})
+
+                        <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-rose-600 group-hover:bg-rose-500 text-white shadow-sm shrink-0 transition">
+                          <span>Watch</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
                         </span>
-                      </button>
+                      </a>
                     )}
 
                     {/* Inning-by-Inning Linescore */}
@@ -5891,95 +5927,121 @@ export default function App() {
                       ]}
                     />
 
-                    {/* TAB: EMBEDDED VIDEO HIGHLIGHTS */}
+                    {/* TAB: OFFICIAL MLB VIDEO HIGHLIGHTS (Direct Outbound Links) */}
                     {boxScoreTeamTab === 'highlights' ? (
                       <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Click any card below to watch the official HD clip directly on MLB.com.
+                          </p>
+                          {boxScore.gameVideoHubUrl && (
+                            <a
+                              href={boxScore.gameVideoHubUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 text-sky-600 dark:text-sky-400 transition"
+                            >
+                              <span>All Game Videos on MLB.com</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+
                         {highlightsList.length === 0 ? (
-                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
-                            No official MLB highlight clips are published for this game yet (clips appear as big plays happen and full recaps post shortly after the final out).
+                          <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-3">
+                            <p className="text-xs text-slate-400">
+                              No official MLB highlight clips are published for this game yet (clips appear as big plays happen and full recaps post shortly after the final out).
+                            </p>
+                            {boxScore.gameVideoHubUrl && (
+                              <a
+                                href={boxScore.gameVideoHubUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition"
+                              >
+                                <span>Check MLB.com Gameday Video</span>
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            )}
                           </div>
                         ) : (
                           <>
+                            {/* Featured Recap / Top Highlight Hero Card */}
                             {(() => {
-                              const currentClip = activeHighlight || highlightsList[0];
+                              const leadClip = highlightsList[0];
                               return (
-                                <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-950">
-                                  {currentClip.videoUrl && !videoError ? (
-                                    <video
-                                      key={currentClip.id}
-                                      src={currentClip.videoUrl}
-                                      poster={currentClip.thumbnail || undefined}
-                                      controls
-                                      playsInline
-                                      onError={() => setVideoError(true)}
-                                      className="w-full aspect-video bg-black"
-                                    />
-                                  ) : (
-                                    <div className="aspect-video flex flex-col items-center justify-center p-6 text-center space-y-3 bg-slate-950 text-slate-300">
-                                      <p className="text-xs text-slate-400">
-                                        Direct MP4 playback is unavailable for this clip in your browser.
-                                      </p>
-                                      {currentClip.mlbUrl && (
-                                        <a
-                                          href={currentClip.mlbUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold"
-                                        >
-                                          Watch on MLB.com <ExternalLink className="w-3.5 h-3.5" />
-                                        </a>
-                                      )}
-                                    </div>
-                                  )}
-                                  <div className="p-4 bg-white dark:bg-slate-900 flex flex-wrap items-start justify-between gap-3">
-                                    <div className="space-y-1 min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        {currentClip.isRecap && (
-                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-500">
-                                            RECAP / CONDENSED
-                                          </span>
-                                        )}
-                                        {currentClip.duration && (
-                                          <span className="text-[11px] font-bold text-slate-400">{currentClip.duration}</span>
-                                        )}
-                                      </div>
-                                      <h4 className="font-extrabold text-sm sm:text-base">{currentClip.headline}</h4>
-                                      {currentClip.blurb && (
-                                        <p className="text-xs text-slate-500 dark:text-slate-400">{currentClip.blurb}</p>
-                                      )}
-                                    </div>
-                                    {currentClip.mlbUrl && (
-                                      <a
-                                        href={currentClip.mlbUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:text-sky-500 shrink-0"
-                                      >
-                                        MLB.com <ExternalLink className="w-3 h-3" />
-                                      </a>
+                                <a
+                                  href={leadClip.mlbUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="group block rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 hover:border-rose-500/60 bg-slate-950 shadow-md hover:shadow-xl transition-all"
+                                >
+                                  <div className="relative aspect-[16/9] sm:aspect-[21/9] w-full bg-slate-900 overflow-hidden">
+                                    {leadClip.thumbnail ? (
+                                      <img
+                                        src={leadClip.thumbnail}
+                                        alt={leadClip.headline}
+                                        className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500"
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full bg-gradient-to-br from-slate-800 to-slate-950" />
                                     )}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/45 to-black/15" />
+
+                                    {/* Center Frosted Play Medallion */}
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                      <span className="w-16 h-16 rounded-full bg-rose-600/95 group-hover:bg-rose-500 text-white flex items-center justify-center shadow-2xl shadow-rose-600/40 ring-4 ring-white/25 group-hover:scale-110 transition-all duration-300">
+                                        <Play className="w-7 h-7 fill-current ml-1" />
+                                      </span>
+                                    </div>
+
+                                    {/* Top Badges */}
+                                    <div className="absolute top-3 left-3 flex items-center gap-2">
+                                      {leadClip.isRecap && (
+                                        <span className="px-2.5 py-1 rounded-full bg-rose-600 text-[10px] font-black uppercase tracking-wider text-white shadow">
+                                          Official Recap
+                                        </span>
+                                      )}
+                                      {leadClip.duration && (
+                                        <span className="px-2 py-1 rounded-lg bg-black/75 backdrop-blur-sm text-[11px] font-bold text-white tabular-nums">
+                                          {leadClip.duration}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="absolute top-3 right-3">
+                                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-black/70 backdrop-blur-sm border border-white/15 text-[11px] font-extrabold text-white group-hover:bg-sky-600 group-hover:border-sky-500 transition">
+                                        <span>Watch on MLB.com</span>
+                                        <ExternalLink className="w-3 h-3" />
+                                      </span>
+                                    </div>
+
+                                    {/* Bottom Headline & Blurb */}
+                                    <div className="absolute bottom-0 inset-x-0 p-4 sm:p-5 text-white">
+                                      <h4 className="font-black text-base sm:text-xl leading-snug drop-shadow-sm">
+                                        {leadClip.headline}
+                                      </h4>
+                                      {leadClip.blurb && (
+                                        <p className="text-xs sm:text-sm text-slate-200/90 mt-1 line-clamp-2 max-w-3xl">
+                                          {leadClip.blurb}
+                                        </p>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
+                                </a>
                               );
                             })()}
 
-                            {/* Clip Playlist Grid */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                              {highlightsList.map((clip) => {
-                                const isSelected = (activeHighlight?.id || highlightsList[0]?.id) === clip.id;
-                                return (
-                                  <button
+                            {/* Highlight Clips Grid */}
+                            {highlightsList.length > 1 && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                                {highlightsList.slice(1).map((clip) => (
+                                  <a
                                     key={clip.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setActiveHighlight(clip);
-                                      setVideoError(false);
-                                    }}
-                                    className={`rounded-xl overflow-hidden border text-left transition flex flex-col ${
-                                      isSelected
-                                        ? 'border-sky-500 ring-2 ring-sky-500/30 bg-sky-500/5'
-                                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-slate-400'
-                                    }`}
+                                    href={clip.mlbUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="group rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500/60 hover:shadow-lg transition-all flex flex-col"
                                   >
                                     <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
                                       {clip.thumbnail ? (
@@ -5987,16 +6049,21 @@ export default function App() {
                                           src={clip.thumbnail}
                                           alt={clip.headline}
                                           loading="lazy"
-                                          className="w-full h-full object-cover"
+                                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                         />
                                       ) : (
                                         <div className="w-full h-full flex items-center justify-center text-slate-600">
                                           <Play className="w-8 h-8" />
                                         </div>
                                       )}
-                                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                                      <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white">
-                                        {clip.duration || 'CLIP'}
+                                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent group-hover:via-black/30 transition" />
+                                      <div className="absolute inset-0 flex items-center justify-center opacity-85 group-hover:opacity-100 transition">
+                                        <span className="w-10 h-10 rounded-full bg-black/65 group-hover:bg-rose-600 text-white border border-white/25 flex items-center justify-center shadow-lg group-hover:scale-110 transition-all">
+                                          <Play className="w-4 h-4 fill-current ml-0.5" />
+                                        </span>
+                                      </div>
+                                      <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-bold text-white tabular-nums">
+                                        {clip.duration || 'VIDEO'}
                                       </div>
                                       {clip.isRecap && (
                                         <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-rose-600 text-[9px] font-black text-white">
@@ -6004,13 +6071,19 @@ export default function App() {
                                         </div>
                                       )}
                                     </div>
-                                    <div className="p-2.5 text-xs font-bold line-clamp-2">
-                                      {clip.headline}
+                                    <div className="p-3 flex-1 flex flex-col justify-between gap-2">
+                                      <div className="text-xs font-bold leading-snug line-clamp-2 group-hover:text-sky-500 transition-colors">
+                                        {clip.headline}
+                                      </div>
+                                      <div className="inline-flex items-center gap-1 text-[10px] font-extrabold text-slate-400 group-hover:text-sky-500 transition-colors">
+                                        <span>Watch on MLB.com</span>
+                                        <ExternalLink className="w-3 h-3" />
+                                      </div>
                                     </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
