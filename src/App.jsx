@@ -45,6 +45,13 @@ function getEffectiveMoveType(tx) {
   return tx?.move_type || 'SIGNING';
 }
 
+function getLocalDateStr(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function shiftDateStr(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + days));
@@ -80,6 +87,9 @@ function BrandLogo({ className = 'w-9 h-9' }) {
 
 function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
   const [imgError, setImgError] = useState(false);
+  useEffect(() => {
+    setImgError(false);
+  }, [playerId]);
   const team = getTeamInfo(teamAbbr);
   const initials = (playerName || team.abbr || 'ML')
     .split(' ')
@@ -153,7 +163,7 @@ export default function App() {
   const autoSyncTriggeredRef = useRef(false);
 
   // Scores & Standings state
-  const [scoreDate, setScoreDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [scoreDate, setScoreDate] = useState(() => getLocalDateStr());
   const [games, setGames] = useState([]);
   const [loadingScores, setLoadingScores] = useState(false);
   const [standingsSeason, setStandingsSeason] = useState('2026');
@@ -236,11 +246,15 @@ export default function App() {
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
 
-  // Full Player Profile sub-tab / group / Savant year state
+  // Full Player Profile sub-tab / group / Savant & Splits year state
   const [profileSubTab, setProfileSubTab] = useState('overview');
   const [profileStatGroup, setProfileStatGroup] = useState('hitting');
   const [savantYear, setSavantYear] = useState('2026');
+  const [splitsYear, setSplitsYear] = useState('2026');
   const [loadingSavant, setLoadingSavant] = useState(false);
+  const [loadingSplits, setLoadingSplits] = useState(false);
+  const [heroImgError, setHeroImgError] = useState(false);
+  const profileReqIdRef = useRef(0);
 
   // Live Box Score Modal state
   const [selectedGamePk, setSelectedGamePk] = useState(null);
@@ -270,7 +284,9 @@ export default function App() {
 
   const openPlayerModal = async (playerId, playerName, teamAbbr) => {
     if (!playerId) return;
+    const reqId = ++profileReqIdRef.current;
     setSelectedGamePk(null);
+    setHeroImgError(false);
     setSelectedPlayer({ playerId, playerName, teamAbbr });
     setProfileSubTab('overview');
     setPlayerStats(null);
@@ -278,36 +294,58 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
       const res = await fetch(`/api/player?id=${playerId}`);
-      if (res.ok) {
+      if (res.ok && profileReqIdRef.current === reqId) {
         const data = await res.json();
         setPlayerStats(data);
         setProfileStatGroup(data.isPitcher ? 'pitching' : 'hitting');
         if (data?.savant?.year) setSavantYear(String(data.savant.year));
+        if (data?.splits?.season) setSplitsYear(String(data.splits.season));
       }
     } catch {
       // Leave null if unreachable
     } finally {
-      setLoadingPlayerStats(false);
+      if (profileReqIdRef.current === reqId) setLoadingPlayerStats(false);
     }
   };
 
   const changeSavantYear = async (yr, groupOverride = null) => {
     if (!selectedPlayer?.playerId) return;
+    const reqId = ++profileReqIdRef.current;
     const grp = groupOverride || profileStatGroup;
     setSavantYear(String(yr));
     setLoadingSavant(true);
     try {
       const res = await fetch(
-        `/api/player?id=${selectedPlayer.playerId}&savantYear=${encodeURIComponent(yr)}&savantGroup=${encodeURIComponent(grp)}`
+        `/api/player?id=${selectedPlayer.playerId}&savantYear=${encodeURIComponent(yr)}&savantGroup=${encodeURIComponent(grp)}&splitsYear=${encodeURIComponent(splitsYear)}`
       );
-      if (res.ok) {
+      if (res.ok && profileReqIdRef.current === reqId) {
         const data = await res.json();
         setPlayerStats(data);
       }
     } catch {
       // Keep existing stats
     } finally {
-      setLoadingSavant(false);
+      if (profileReqIdRef.current === reqId) setLoadingSavant(false);
+    }
+  };
+
+  const changeSplitsYear = async (yr) => {
+    if (!selectedPlayer?.playerId) return;
+    const reqId = ++profileReqIdRef.current;
+    setSplitsYear(String(yr));
+    setLoadingSplits(true);
+    try {
+      const res = await fetch(
+        `/api/player?id=${selectedPlayer.playerId}&savantYear=${encodeURIComponent(savantYear)}&savantGroup=${encodeURIComponent(profileStatGroup)}&splitsYear=${encodeURIComponent(yr)}`
+      );
+      if (res.ok && profileReqIdRef.current === reqId) {
+        const data = await res.json();
+        setPlayerStats(data);
+      }
+    } catch {
+      // Keep existing stats
+    } finally {
+      if (profileReqIdRef.current === reqId) setLoadingSplits(false);
     }
   };
 
@@ -845,6 +883,12 @@ export default function App() {
           const postBlock = playerStats?.postseason?.[groupKey] || { seasons: [], career: null };
           const splitRows = playerStats?.splits?.[groupKey] || [];
           const latestSeasonRow = regBlock.seasons?.[0] || null;
+          const uniqueRegSeasons = new Set((regBlock.seasons || []).map((s) => s.season)).size;
+          const uniquePostSeasons = new Set((postBlock.seasons || []).map((s) => s.season)).size;
+          const splitSeasonOptions = (regBlock.seasons || [])
+            .map((s) => String(s.season))
+            .filter((y, i, arr) => arr.indexOf(y) === i)
+            .slice(0, 6);
           const careerStat = regBlock.career;
           const savant = playerStats?.savant;
 
@@ -930,15 +974,24 @@ export default function App() {
                 <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/25 to-transparent" />
                 <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-5">
                   <div className="flex items-center gap-4">
-                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center">
-                      <img
-                        src={`https://midfield.mlbstatic.com/v1/people/${selectedPlayer.playerId}/spots/180`}
-                        alt={playerStats?.fullName || selectedPlayer.playerName}
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                        }}
-                        className="w-full h-full object-cover"
-                      />
+                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center font-black text-2xl text-white/90">
+                      {!heroImgError ? (
+                        <img
+                          src={`https://midfield.mlbstatic.com/v1/people/${selectedPlayer.playerId}/spots/180`}
+                          alt={playerStats?.fullName || selectedPlayer.playerName}
+                          onError={() => setHeroImgError(true)}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span>
+                          {(playerStats?.fullName || selectedPlayer.playerName || 'ML')
+                            .split(' ')
+                            .map((w) => w[0])
+                            .join('')
+                            .slice(0, 2)
+                            .toUpperCase()}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -1029,8 +1082,8 @@ export default function App() {
                   <div className="flex flex-wrap items-center gap-1.5 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 w-fit">
                     {[
                       { id: 'overview', label: 'Overview & Statcast' },
-                      { id: 'seasons', label: `Year-by-Year (${regBlock.seasons.length})` },
-                      { id: 'postseason', label: `Postseason (${postBlock.seasons.length})` },
+                      { id: 'seasons', label: `Year-by-Year (${uniqueRegSeasons})` },
+                      { id: 'postseason', label: `Postseason (${uniquePostSeasons})` },
                       { id: 'splits', label: `Splits (${playerStats.splits?.season || ''})` },
                     ].map((t) => (
                       <button
@@ -1261,7 +1314,7 @@ export default function App() {
                           <h3 className="font-extrabold text-sm">
                             {profileSubTab === 'postseason' ? 'MLB Postseason' : 'MLB Regular Season'} {isPitchView ? 'Pitching' : 'Batting'} Stats
                           </h3>
-                          <span className="text-xs text-slate-400">{activeSet.seasons.length} Seasons</span>
+                          <span className="text-xs text-slate-400">{profileSubTab === 'postseason' ? uniquePostSeasons : uniqueRegSeasons} Seasons</span>
                         </div>
                         {activeSet.seasons.length === 0 ? (
                           <div className="p-10 text-center text-xs text-slate-400">
@@ -1413,14 +1466,43 @@ export default function App() {
                   {/* SUB-TAB 4: Situational Splits */}
                   {profileSubTab === 'splits' && (
                     <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-                      <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                        <h3 className="font-extrabold text-sm">
-                          {playerStats.splits?.season} Situational Splits (vs L / vs R / Home / Away)
-                        </h3>
+                      <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h3 className="font-extrabold text-sm">
+                            {playerStats.splits?.season || splitsYear} Situational Splits (Home / Away / vs L / vs R)
+                          </h3>
+                          {isPitchView && (
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              Season totals across all clubs played • MLB does not assign ERA to handedness (vs L / vs R) splits
+                            </p>
+                          )}
+                        </div>
+
+                        {splitSeasonOptions.length > 1 && (
+                          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                            {splitSeasonOptions.map((yr) => (
+                              <button
+                                key={yr}
+                                onClick={() => changeSplitsYear(yr)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                                  String(playerStats.splits?.season || splitsYear) === String(yr)
+                                    ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                                    : 'text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {yr}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {splitRows.length === 0 ? (
+                      {loadingSplits ? (
                         <div className="p-10 text-center text-xs text-slate-400">
-                          No situational split data available for {playerStats.splits?.season}.
+                          Loading {splitsYear} situational splits...
+                        </div>
+                      ) : splitRows.length === 0 ? (
+                        <div className="p-10 text-center text-xs text-slate-400">
+                          No situational split data available for {playerStats.splits?.season || splitsYear}.
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
@@ -1434,6 +1516,8 @@ export default function App() {
                                     <th className="py-2.5 px-2 font-bold text-right">ERA</th>
                                     <th className="py-2.5 px-2 font-bold text-right">WHIP</th>
                                     <th className="py-2.5 px-2 font-bold text-right">AVG</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">OBP</th>
+                                    <th className="py-2.5 px-2 font-bold text-right">SLG</th>
                                     <th className="py-2.5 px-2 font-bold text-right">OPS</th>
                                     <th className="py-2.5 px-2 font-bold text-right">HR</th>
                                     <th className="py-2.5 px-2 font-bold text-right">BB</th>
@@ -1458,17 +1542,26 @@ export default function App() {
                             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                               {splitRows.map((sp, i) => (
                                 <tr key={`${sp.code}-${i}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                                  <td className="py-2.5 pl-4 pr-3 font-extrabold">{sp.label}</td>
+                                  <td className="py-2.5 pl-4 pr-3 font-extrabold">
+                                    <span>{sp.label}</span>
+                                    {sp.team && String(sp.team).includes('TM') && (
+                                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-500">
+                                        {sp.team}
+                                      </span>
+                                    )}
+                                  </td>
                                   {isPitchView ? (
                                     <>
                                       <td className="py-2.5 px-2 text-right">{sp.stat.inningsPitched ?? '—'}</td>
                                       <td className="py-2.5 px-2 text-right font-bold text-sky-600 dark:text-sky-400">{sp.stat.era ?? '—'}</td>
                                       <td className="py-2.5 px-2 text-right">{sp.stat.whip ?? '—'}</td>
                                       <td className="py-2.5 px-2 text-right">{sp.stat.avg ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.obp ?? '—'}</td>
+                                      <td className="py-2.5 px-2 text-right">{sp.stat.slg ?? '—'}</td>
                                       <td className="py-2.5 px-2 text-right font-bold">{sp.stat.ops ?? '—'}</td>
                                       <td className="py-2.5 px-2 text-right">{sp.stat.homeRuns ?? 0}</td>
                                       <td className="py-2.5 px-2 text-right">{sp.stat.baseOnBalls ?? 0}</td>
-                                      <td className="py-2.5 pr-4 pl-2 text-right">{sp.stat.strikeOuts ?? 0}</td>
+                                      <td className="py-2.5 pr-4 pl-2 text-right font-bold">{sp.stat.strikeOuts ?? 0}</td>
                                     </>
                                   ) : (
                                     <>
@@ -2249,7 +2342,7 @@ export default function App() {
                                 e.stopPropagation();
                                 openTeamHub(prevTeam.abbr);
                               }}
-                              className="px-1.5 py-0.2 rounded text-[10px] font-black text-white hover:opacity-85"
+                              className="px-1.5 py-0.5 rounded text-[10px] font-black text-white hover:opacity-85"
                               style={{ backgroundColor: prevTeam.color }}
                               title="Previous club"
                             >
@@ -2266,7 +2359,7 @@ export default function App() {
                                       e.stopPropagation();
                                       openTeamHub(newTeamInfo.abbr);
                                     }}
-                                    className="px-1.5 py-0.2 rounded text-[10px] font-black text-white hover:opacity-85"
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-black text-white hover:opacity-85"
                                     style={{ backgroundColor: newTeamInfo.color }}
                                     title={`Signed with ${newTeamInfo.name}`}
                                   >
@@ -2345,7 +2438,7 @@ export default function App() {
                     <ChevronRight className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => setScoreDate(new Date().toISOString().slice(0, 10))}
+                    onClick={() => setScoreDate(getLocalDateStr())}
                     className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-600 text-white hover:bg-sky-500"
                   >
                     Today
@@ -2684,7 +2777,7 @@ export default function App() {
                               <div className="text-[10px] font-black uppercase text-amber-500">#1 Leader</div>
                               <div className="font-extrabold text-sm truncate">{topPlayer.fullName}</div>
                               <span
-                                className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                                className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-black text-white"
                                 style={{ backgroundColor: topTeam.color }}
                               >
                                 {topTeam.abbr}
@@ -2710,7 +2803,7 @@ export default function App() {
                                 <span className="w-5 font-bold text-slate-400">{item.rank}.</span>
                                 <span className="font-bold truncate">{item.fullName}</span>
                                 <span
-                                  className="px-1.5 py-0.2 rounded text-[10px] font-black text-white shrink-0"
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-black text-white shrink-0"
                                   style={{ backgroundColor: tInfo.color }}
                                 >
                                   {tInfo.abbr}
@@ -2754,11 +2847,27 @@ export default function App() {
 
             {(() => {
               const info = getTeamInfo(hubTeam);
+              const isDepartureMove = (t) => {
+                const h = (t.headline || '').toLowerCase();
+                return (
+                  isFreeAgencyElection(t) ||
+                  h.includes('released') ||
+                  h.includes('non-tendered') ||
+                  h.includes('designated for assignment')
+                );
+              };
               const additions = transactions.filter(
-                (t) => t.status !== 'VOIDED' && (t.to_team === hubTeam || t.team_a === hubTeam)
+                (t) =>
+                  t.status !== 'VOIDED' &&
+                  (t.to_team === hubTeam || t.team_a === hubTeam) &&
+                  !isDepartureMove(t)
               );
               const subtractions = transactions.filter(
-                (t) => t.status !== 'VOIDED' && (t.from_team === hubTeam || t.team_b === hubTeam)
+                (t) =>
+                  t.status !== 'VOIDED' &&
+                  (t.from_team === hubTeam ||
+                    t.team_b === hubTeam ||
+                    (t.to_team === hubTeam && isDepartureMove(t)))
               );
               return (
                 <div className="space-y-4">
@@ -2976,7 +3085,7 @@ export default function App() {
                                   <span className="font-bold truncate">
                                     {p.jerseyNumber ? `#${p.jerseyNumber} ` : ''}{p.fullName}
                                   </span>
-                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ml-1 shrink-0">
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ml-1 shrink-0">
                                     {p.position}
                                   </span>
                                 </button>
@@ -3249,7 +3358,7 @@ export default function App() {
                                   <div className="font-bold text-sm truncate flex items-center gap-1.5">
                                     <span>{row.team.name}</span>
                                     {row.overTax && (
-                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-rose-500/15 text-rose-500 shrink-0">
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-rose-500/15 text-rose-500 shrink-0">
                                         Over CBT
                                       </span>
                                     )}
@@ -3473,14 +3582,14 @@ export default function App() {
                           <div className="min-w-0">
                             <div className="text-sm font-bold truncate flex items-center gap-1.5">
                               <span>{p.fullName}</span>
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
                                 {p.position}
                               </span>
                             </div>
                             <div className="text-xs text-slate-500 flex items-center gap-1.5">
                               {tInfo ? (
                                 <span
-                                  className="px-1.5 py-0.2 rounded text-[10px] font-black text-white"
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-black text-white"
                                   style={{ backgroundColor: tInfo.color }}
                                 >
                                   {tInfo.abbr}
@@ -3582,9 +3691,9 @@ export default function App() {
                               <span className="font-extrabold text-sm sm:text-base">{row.info.name}</span>
                             </button>
                             <div className="flex items-center gap-4">
-                              <span className="text-2xl font-black">{row.runs}</span>
+                              <span className="text-2xl font-black">{row.runs ?? '—'}</span>
                               <span className="text-xs text-slate-400 w-16 text-right">
-                                {row.hits} H • {row.err} E
+                                {row.hits ?? '—'} H • {row.err ?? '—'} E
                               </span>
                             </div>
                           </div>
@@ -3647,9 +3756,9 @@ export default function App() {
                                     </td>
                                   );
                                 })}
-                                <td className="py-2 px-2 font-black text-sky-500 border-l border-slate-200 dark:border-slate-800">{r.totals.runs}</td>
-                                <td className="py-2 px-2 font-bold">{r.totals.hits}</td>
-                                <td className="py-2 px-2">{r.totals.errors}</td>
+                                <td className="py-2 px-2 font-black text-sky-500 border-l border-slate-200 dark:border-slate-800">{r.totals.runs ?? '—'}</td>
+                                <td className="py-2 px-2 font-bold">{r.totals.hits ?? '—'}</td>
+                                <td className="py-2 px-2">{r.totals.errors ?? '—'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -3711,7 +3820,7 @@ export default function App() {
                                     <span className="hover:text-sky-500">{b.fullName}</span>
                                     <span className="ml-1.5 text-[10px] text-slate-400 font-semibold">{b.position}</span>
                                     {b.hr > 0 && (
-                                      <span className="ml-1.5 px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">
+                                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-black">
                                         {b.hr > 1 ? `${b.hr} HR` : 'HR'}
                                       </span>
                                     )}
