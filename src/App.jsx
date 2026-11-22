@@ -495,8 +495,8 @@ function SlidingSegmented({
     },
     sky: {
       wrap: 'relative inline-flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-full max-w-full overflow-x-auto no-scrollbar',
-      pill: 'bg-sky-600 rounded-full shadow-sm shadow-sky-600/30',
-      activeText: 'text-white',
+      pill: 'bg-sky-600 rounded-full shadow-sm',
+      activeText: 'text-white dark:text-zinc-950',
       idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
       btn: 'px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap',
       insetY: 'top-1 bottom-1',
@@ -511,8 +511,8 @@ function SlidingSegmented({
     },
     card: {
       wrap: 'relative inline-flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800 max-w-full overflow-x-auto no-scrollbar',
-      pill: 'bg-sky-600 rounded-lg shadow-sm shadow-sky-600/25',
-      activeText: 'text-white',
+      pill: 'bg-sky-600 rounded-lg shadow-sm',
+      activeText: 'text-white dark:text-zinc-950',
       idleText: 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white',
       btn: 'px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap',
       insetY: 'top-1 bottom-1',
@@ -2261,7 +2261,7 @@ export default function App() {
             if (val >= 90) return 'bg-rose-600 text-white';
             if (val >= 70) return 'bg-orange-500 text-white';
             if (val >= 45) return 'bg-slate-500 text-white';
-            if (val >= 25) return 'bg-sky-600 text-white';
+            if (val >= 25) return 'bg-blue-600 text-white';
             return 'bg-blue-700 text-white';
           };
 
@@ -2735,7 +2735,7 @@ export default function App() {
             if (val >= 90) return 'bg-rose-600 text-white';
             if (val >= 70) return 'bg-orange-500 text-white';
             if (val >= 45) return 'bg-slate-500 text-white';
-            if (val >= 25) return 'bg-sky-600 text-white';
+            if (val >= 25) return 'bg-blue-600 text-white';
             return 'bg-blue-700 text-white';
           };
 
@@ -3704,14 +3704,7 @@ export default function App() {
                 <div className="text-center py-16 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900">
                   <p className="font-semibold text-slate-500">No transactions match your current filters.</p>
                   <button
-                    onClick={() => {
-                      setSelectedTeams([]);
-                      setMyTeamsOnlyActive(false);
-                      setStatusFilter('ALL');
-                      setTypeFilter('ALL');
-                      setSearchQuery('');
-                      setMajorLeagueOnly(false);
-                    }}
+                    onClick={resetAllFeedFilters}
                     className="mt-2 text-xs font-bold text-sky-500 hover:underline"
                   >
                     Reset all filters
@@ -3721,7 +3714,7 @@ export default function App() {
                 <div className="space-y-6">
                   {groupedTransactions.map((dateGroup) => (
                     <section key={dateGroup.key} className="space-y-3">
-                      <div className="sticky top-[68px] z-20 flex items-center gap-3 py-1 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-sm">
+                      <div className="sticky top-[88px] z-20 flex items-center gap-3 py-1 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-sm">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 shadow-sm">
                           <Calendar className="w-3 h-3 text-sky-500" />
                           <span>{dateGroup.label}</span>
@@ -3982,7 +3975,7 @@ export default function App() {
               )}
             </div>
 
-            <aside className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-4 sticky top-20">
+            <aside className="hidden lg:block lg:col-span-4 xl:col-span-3 space-y-4 sticky top-24">
               <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-3">
                 <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-400">
                   <Activity className="w-4 h-4 text-sky-500" />

@@ -94,6 +94,11 @@
 .dark .bg-sky-600:hover {
   background-color: #ffffff !important;
 }
+.dark .hover\:bg-sky-600:hover {
+  background-color: #f4f4f5 !important;
+  color: #09090b !important;
+}
+
 
 .bg-sky-500 {
   background-color: var(--hst-accent) !important;
