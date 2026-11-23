@@ -20,14 +20,14 @@ export const RARITY_TIERS = [
   },
   {
     id: 'SCRIPT_10',
-    name: 'Gold Ink Script',
-    shortLabel: '/10 SCRIPT',
+    name: 'Sapphire Refractor',
+    shortLabel: '/10 SAPPHIRE',
     odds: 0.004, // 0.4%
     oddsLabel: '0.4%',
     serialCap: 10,
     rank: 5,
-    accent: '#f59e0b',
-    badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-400/60',
+    accent: '#38bdf8',
+    badgeClass: 'bg-blue-500/20 text-sky-300 border border-sky-400/60',
     cardClass: 'hst-card-script',
   },
   {

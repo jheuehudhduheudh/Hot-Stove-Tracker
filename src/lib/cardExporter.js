@@ -559,18 +559,16 @@ const RARITY_CANVAS_STYLES = {
     badgeBg: '#dc2626',
     badgeText: '#ffffff',
     accent: '#f87171',
-    hasScript: true,
     hasSheen: true,
   },
   SCRIPT_10: {
-    label: 'GOLD INK SCRIPT',
-    border: '#f59e0b',
-    topBg: '#271a06',
-    bottomBg: '#0b0a09',
-    badgeBg: '#d97706',
-    badgeText: '#09090b',
-    accent: '#fbbf24',
-    hasScript: true,
+    label: 'SAPPHIRE REFRACTOR',
+    border: '#38bdf8',
+    topBg: '#0c274d',
+    bottomBg: '#050c1a',
+    badgeBg: '#2563eb',
+    badgeText: '#ffffff',
+    accent: '#7dd3fc',
     hasSheen: true,
   },
   GOLD_25: {
@@ -785,20 +783,6 @@ export async function exportPulledCardPng(card, teamInfo) {
     }
   }
 
-  // Script signature overlay for /10 & 1/1
-  if (style.hasScript) {
-    ctx.save();
-    ctx.translate(ix + iw / 2, plaqueY - 26);
-    ctx.rotate(-0.07);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = card.rarityId === 'OBSIDIAN_1' ? '#f87171' : '#fbbf24';
-    ctx.font = 'italic 700 48px Georgia, "Times New Roman", serif';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 10;
-    ctx.fillText(card.fullName || '', 0, 0);
-    ctx.restore();
-  }
-
   // Lower Frosted Plaque inside Inner Window
   ctx.fillStyle = 'rgba(20, 18, 38, 0.94)';
   ctx.fillRect(ix, plaqueY, iw, plaqueH);
@@ -843,13 +827,6 @@ export async function exportPulledCardPng(card, teamInfo) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // HST! Corner Mark
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = style.accent;
-  ctx.font = 'italic 900 22px "Plus Jakarta Sans", Inter, sans-serif';
-  ctx.fillText('HST!', ix + iw - 12, iy + 14);
-
   // Bottom Stub Footer: Date + Matchup/Club
   const footY = botPerfY + 46;
   ctx.textAlign = 'left';
@@ -857,7 +834,7 @@ export async function exportPulledCardPng(card, teamInfo) {
   ctx.fillStyle = 'rgba(255,255,255,0.78)';
   ctx.font = '600 20px "JetBrains Mono", monospace';
   const rawDate = card.gameMeta?.date || (card.pulledAt ? String(card.pulledAt).slice(0, 10) : '2026-27');
-  ctx.fillText(`HST  •  ${rawDate}`, cx + 34, footY);
+  ctx.fillText(rawDate, cx + 34, footY);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = '#ffffff';
