@@ -205,10 +205,22 @@ export function buildBoxScorePool(boxScore) {
   const homeAbbr = boxScore.home?.abbr || 'HME';
   const matchup = `${awayAbbr} @ ${homeAbbr}`;
   const gameDate = boxScore.date || boxScore.officialDate || '';
+  const awayRuns = boxScore.away?.runs ?? null;
+  const homeRuns = boxScore.home?.runs ?? null;
+  const statusShort = boxScore.status ? String(boxScore.status).toUpperCase().slice(0, 10) : 'FINAL';
   const scoreLine =
-    boxScore.away?.runs !== undefined && boxScore.home?.runs !== undefined
-      ? `${awayAbbr} ${boxScore.away.runs} – ${homeAbbr} ${boxScore.home.runs}`
+    awayRuns !== null && homeRuns !== null
+      ? `${awayAbbr} ${awayRuns} – ${homeAbbr} ${homeRuns}`
       : matchup;
+
+  const gameMeta = {
+    awayAbbr,
+    homeAbbr,
+    awayRuns,
+    homeRuns,
+    status: statusShort,
+    date: gameDate,
+  };
 
   const byId = new Map();
 
@@ -225,9 +237,10 @@ export function buildBoxScorePool(boxScore) {
         fullName: b.fullName,
         teamAbbr,
         position: b.position || 'BAT',
-        statLine: parts.join(', '),
+        statLine: parts.join(' • '),
         sourceTag: `${matchup}${gameDate ? ` • ${gameDate}` : ''}`,
         gameMatchup: scoreLine,
+        gameMeta,
       });
     }
     for (const p of side?.pitchers || []) {
@@ -242,6 +255,7 @@ export function buildBoxScorePool(boxScore) {
         statLine: parts.join(' • '),
         sourceTag: `${matchup}${gameDate ? ` • ${gameDate}` : ''}`,
         gameMatchup: scoreLine,
+        gameMeta,
       });
     }
   };
@@ -382,6 +396,7 @@ export function ripSinglePack({
       statLine: chosenPlayer.statLine || '',
       sourceTag: chosenPlayer.sourceTag || series,
       gameMatchup: chosenPlayer.gameMatchup || null,
+      gameMeta: chosenPlayer.gameMeta || null,
       rarityId: chosenTier.id,
       serialNumber: mintedSerial,
       serialCap: chosenTier.serialCap,

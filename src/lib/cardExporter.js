@@ -622,162 +622,248 @@ const RARITY_CANVAS_STYLES = {
 export async function exportPulledCardPng(card, teamInfo) {
   if (!card) return;
   const W = 750;
-  const H = 1050;
+  const H = 1090;
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
   const style = RARITY_CANVAS_STYLES[card.rarityId] || RARITY_CANVAS_STYLES.BASE;
-  const teamColor = teamInfo?.color || '#27272a';
+  const teamColor = teamInfo?.color || '#3b1c26';
 
-  const bg = ctx.createLinearGradient(0, 0, W, H);
+  // Ambient dark studio background
+  const bg = ctx.createRadialGradient(W / 2, H * 0.35, 60, W / 2, H / 2, H * 0.72);
   bg.addColorStop(0, style.topBg);
-  bg.addColorStop(0.55, '#101013');
-  bg.addColorStop(1, style.bottomBg);
+  bg.addColorStop(1, '#090708');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  const rad = ctx.createRadialGradient(W / 2, 370, 40, W / 2, 370, 340);
-  rad.addColorStop(0, `${teamColor}66`);
-  rad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = rad;
-  ctx.fillRect(0, 0, W, H);
+  // Ticket-Stub Outer Card Bounds
+  const cx = 46;
+  const cy = 46;
+  const cw = W - 92;
+  const ch = H - 92;
 
-  if (style.hasSheen) {
-    ctx.save();
-    ctx.globalAlpha = 0.08;
-    const sheen = ctx.createLinearGradient(0, 0, W, H);
-    if (card.rarityId === 'HOLO') {
-      sheen.addColorStop(0, '#38bdf8');
-      sheen.addColorStop(0.35, '#a78bfa');
-      sheen.addColorStop(0.7, '#f472b6');
-      sheen.addColorStop(1, '#34d399');
-    } else {
-      sheen.addColorStop(0, '#ffffff');
-      sheen.addColorStop(0.5, style.border);
-      sheen.addColorStop(1, '#ffffff');
-    }
-    ctx.fillStyle = sheen;
-    ctx.beginPath();
-    ctx.moveTo(0, 120);
-    ctx.lineTo(W, 380);
-    ctx.lineTo(W, 560);
-    ctx.lineTo(0, 300);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
+  // Card Base Fill
+  roundRectPath(ctx, cx, cy, cw, ch, 30);
+  const cardBg = ctx.createLinearGradient(cx, cy, cx + cw, cy + ch);
+  cardBg.addColorStop(0, style.topBg);
+  cardBg.addColorStop(0.55, '#18131d');
+  cardBg.addColorStop(1, style.bottomBg);
+  ctx.fillStyle = cardBg;
+  ctx.fill();
 
-  roundRectPath(ctx, 22, 22, W - 44, H - 44, 28);
+  // Metallic Outer Border
   ctx.strokeStyle = style.border;
-  ctx.lineWidth = card.rarityId === 'OBSIDIAN_1' ? 6 : 4;
+  ctx.lineWidth = 7;
   ctx.stroke();
 
-  roundRectPath(ctx, 36, 36, W - 72, H - 72, 20);
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-  ctx.lineWidth = 1.5;
+  // Top & Bottom Dashed Perforated Lines
+  const topPerfY = cy + 92;
+  const botPerfY = cy + ch - 92;
+  ctx.save();
+  ctx.setLineDash([10, 10]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx + 26, topPerfY);
+  ctx.lineTo(cx + cw - 26, topPerfY);
+  ctx.moveTo(cx + 26, botPerfY);
+  ctx.lineTo(cx + cw - 26, botPerfY);
   ctx.stroke();
+  ctx.restore();
 
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = style.accent;
-  ctx.font = '800 15px "JetBrains Mono", monospace';
-  ctx.fillText(String(card.series || '2026-27 HOT STOVE').toUpperCase(), 60, 78);
+  // 4 Ticket-Stub Semi-Circle Side Notches
+  const drawNotch = (nx, ny) => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(nx, ny, 22, 0, Math.PI * 2);
+    ctx.fillStyle = '#090708';
+    ctx.fill();
+    ctx.strokeStyle = style.border;
+    ctx.lineWidth = 6;
+    ctx.stroke();
+    ctx.restore();
+  };
+  drawNotch(cx, topPerfY);
+  drawNotch(cx + cw, topPerfY);
+  drawNotch(cx, botPerfY);
+  drawNotch(cx + cw, botPerfY);
 
-  const serialLabel = card.serialCap
-    ? `#${String(card.serialNumber || 1).padStart(card.serialCap >= 100 ? 3 : 2, '0')} / ${card.serialCap}`
-    : style.label;
-
-  ctx.font = '800 16px "JetBrains Mono", monospace';
-  const badgeW = Math.max(150, ctx.measureText(serialLabel).width + 32);
-  roundRectPath(ctx, W - 60 - badgeW, 58, badgeW, 38, 8);
+  // Top Header: Slanted Rarity Ribbon + Serial Number
+  const ribbonText = style.label.split(' ')[0];
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx + 42, cy + 26);
+  ctx.lineTo(cx + 210, cy + 26);
+  ctx.lineTo(cx + 194, cy + 68);
+  ctx.lineTo(cx + 26, cy + 68);
+  ctx.closePath();
   ctx.fillStyle = style.badgeBg;
   ctx.fill();
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillStyle = style.badgeText;
-  ctx.fillText(serialLabel, W - 60 - badgeW / 2, 78);
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  ctx.font = '900 220px "Plus Jakarta Sans", Inter, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(teamInfo?.abbr || card.teamAbbr || 'MLB', W / 2, 360);
+  ctx.font = '900 20px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText(ribbonText, cx + 118, cy + 48);
   ctx.restore();
 
-  const headshotUrl = card.playerId
-    ? `https://midfield.mlbstatic.com/v1/people/${card.playerId}/spots/213`
-    : null;
-  const img = await loadCorsImage(headshotUrl);
-  const initials = (card.fullName || 'ML')
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const serialLabel = card.serialCap
+    ? `${card.serialNumber || 1} / ${card.serialCap}`
+    : 'SERIES 01';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#f4f4f5';
+  ctx.font = '700 24px "JetBrains Mono", monospace';
+  ctx.fillText(serialLabel, cx + cw - 34, cy + 48);
 
-  drawAvatarMedallion(ctx, img, (W - 310) / 2, 175, 310, teamColor, initials, null);
+  // Inner Center Collector Window
+  const ix = cx + 32;
+  const iy = topPerfY + 28;
+  const iw = cw - 64;
+  const ih = botPerfY - topPerfY - 56;
 
+  ctx.save();
+  roundRectPath(ctx, ix, iy, iw, ih, 24);
+  const winGrad = ctx.createLinearGradient(ix, iy, ix + iw, iy + ih);
+  winGrad.addColorStop(0, teamColor);
+  winGrad.addColorStop(0.58, '#1d1424');
+  winGrad.addColorStop(1, '#100e18');
+  ctx.fillStyle = winGrad;
+  ctx.fill();
+  ctx.clip();
+
+  // Giant Watermark Team Abbr
+  ctx.fillStyle = 'rgba(255,255,255,0.11)';
+  ctx.font = '900 215px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(teamInfo?.abbr || card.teamAbbr || 'MLB', ix + iw - 10, iy + 22);
+
+  // Top-Left Stacked Name
+  const nameParts = String(card.fullName || 'MLB Player').trim().split(/\s+/);
+  const firstName = nameParts.length > 1 ? nameParts[0] : '';
+  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : nameParts[0];
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  if (firstName) {
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = '800 24px "Plus Jakarta Sans", Inter, sans-serif';
+    ctx.fillText(firstName.toUpperCase(), ix + 28, iy + 54);
+  }
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '900 42px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText(fitText(ctx, lastName.toUpperCase(), iw - 160), ix + 28, iy + 98);
+  ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  ctx.font = '700 18px "JetBrains Mono", monospace';
+  ctx.fillText(`${card.position || 'MLB'} • ${teamInfo?.abbr || card.teamAbbr || 'MLB'}`, ix + 28, iy + 128);
+
+  // Load Transparent Cutout (fallback to spot headshot)
+  let img = await loadCorsImage(
+    card.playerId
+      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_426,q_auto:best/v1/people/${card.playerId}/headshot/67/current`
+      : null
+  );
+  if (!img && card.playerId) {
+    img = await loadCorsImage(`https://midfield.mlbstatic.com/v1/people/${card.playerId}/spots/213`);
+  }
+
+  const plaqueH = 220;
+  const plaqueY = iy + ih - plaqueH;
+
+  if (img) {
+    try {
+      const targetH = 380;
+      const ratio = targetH / img.height;
+      const dw = img.width * ratio;
+      ctx.drawImage(img, ix + (iw - dw) / 2, plaqueY - targetH + 22, dw, targetH);
+    } catch {
+      // ignore
+    }
+  }
+
+  // Script signature overlay for /10 & 1/1
   if (style.hasScript) {
     ctx.save();
-    ctx.translate(W / 2, 515);
+    ctx.translate(ix + iw / 2, plaqueY - 26);
     ctx.rotate(-0.07);
     ctx.textAlign = 'center';
     ctx.fillStyle = card.rarityId === 'OBSIDIAN_1' ? '#f87171' : '#fbbf24';
-    ctx.font = 'italic 700 44px Georgia, "Times New Roman", serif';
-    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.font = 'italic 700 48px Georgia, "Times New Roman", serif';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 10;
     ctx.fillText(card.fullName || '', 0, 0);
     ctx.restore();
   }
 
-  const plateY = 580;
-  roundRectPath(ctx, 56, plateY, W - 112, 330, 18);
-  ctx.fillStyle = 'rgba(17, 17, 19, 0.92)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  // Lower Frosted Plaque inside Inner Window
+  ctx.fillStyle = 'rgba(20, 18, 38, 0.94)';
+  ctx.fillRect(ix, plaqueY, iw, plaqueH);
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
   ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ix, plaqueY);
+  ctx.lineTo(ix + iw, plaqueY);
   ctx.stroke();
 
-  roundRectPath(ctx, 56, plateY, W - 112, 8, 4);
-  ctx.fillStyle = teamColor;
-  ctx.fill();
+  const segs = String(card.statLine || 'OFFICIAL MLB PULL')
+    .split(/[•,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const hLine1 = (segs[0] || card.statLine || 'OFFICIAL PULL').toUpperCase();
+  const hLine2 = segs.length >= 2 ? segs.slice(1, 3).join(' • ').toUpperCase() : '';
 
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillStyle = style.accent;
-  ctx.font = '800 14px "JetBrains Mono", monospace';
+  ctx.font = '900 42px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText(fitText(ctx, hLine1, iw - 48), ix + iw / 2, plaqueY + (hLine2 ? 68 : 95));
+
+  if (hLine2) {
+    ctx.font = '900 32px "Plus Jakarta Sans", Inter, sans-serif';
+    ctx.fillText(fitText(ctx, hLine2, iw - 48), ix + iw / 2, plaqueY + 118);
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  ctx.font = '600 18px "JetBrains Mono", monospace';
   ctx.fillText(
-    `${teamInfo?.name || card.teamAbbr || 'MLB'}  •  ${card.position || 'MLB'}  •  ${style.label}`.toUpperCase(),
-    W / 2,
-    plateY + 46
+    fitText(ctx, `${style.label} • ${card.sourceTag || card.series}`, iw - 48),
+    ix + iw / 2,
+    plaqueY + 174
   );
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '800 44px "Plus Jakarta Sans", Inter, sans-serif';
-  ctx.fillText(fitText(ctx, card.fullName, W - 150), W / 2, plateY + 104);
+  ctx.restore();
 
-  roundRectPath(ctx, 84, plateY + 142, W - 168, 76, 12);
-  ctx.fillStyle = '#0a0a0b';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+  // Inner Window Crisp Metallic Outline
+  roundRectPath(ctx, ix, iy, iw, ih, 24);
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = '#f4f4f5';
-  ctx.font = '700 22px "JetBrains Mono", monospace';
-  ctx.fillText(fitText(ctx, card.statLine || 'Official MLB Pull', W - 200), W / 2, plateY + 182);
+  // HST! Corner Mark
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = style.accent;
+  ctx.font = 'italic 900 22px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText('HST!', ix + iw - 12, iy + 14);
 
-  ctx.fillStyle = '#a1a1aa';
-  ctx.font = '700 14px "JetBrains Mono", monospace';
-  const stampText = card.gameMatchup
-    ? `GAME CHECK-IN • ${card.gameMatchup} • ${card.sourceTag || ''}`
-    : `${card.packMode === 'GAME_CHECKIN' ? 'GAME CHECK-IN' : 'HOT STOVE WIRE'} • ${card.sourceTag || ''}`;
-  ctx.fillText(fitText(ctx, stampText.toUpperCase(), W - 160), W / 2, plateY + 266);
+  // Bottom Stub Footer: Date + Matchup/Club
+  const footY = botPerfY + 46;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.78)';
+  ctx.font = '600 20px "JetBrains Mono", monospace';
+  const rawDate = card.gameMeta?.date || (card.pulledAt ? String(card.pulledAt).slice(0, 10) : '2026-27');
+  ctx.fillText(`HST  •  ${rawDate}`, cx + 34, footY);
 
-  ctx.fillStyle = '#71717a';
-  ctx.font = '700 13px "JetBrains Mono", monospace';
-  ctx.fillText('HOT STOVE TRACKER  •  hot-stove-tracker.vercel.app', W / 2, H - 62);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 22px "JetBrains Mono", monospace';
+  const rightFoot = card.gameMatchup || `${teamInfo?.abbr || card.teamAbbr || 'MLB'} • ${card.position || 'MLB'}`;
+  ctx.fillText(rightFoot, cx + cw - 34, footY);
 
-  downloadCanvas(canvas, `${slugify(card.fullName)}-${slugify(card.rarityId)}.png`);
+  downloadCanvas(canvas, `${slugify(card.fullName)}-${slugify(card.rarityId)}-ticket.png`);
 }
 
 export async function exportShowcasePng(handle, pinnedCards, getTeamInfoFn) {
