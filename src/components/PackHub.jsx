@@ -325,7 +325,8 @@ function TicketCollectorCard({
   onExportPng,
   TeamLogo,
   size = 'grid', // 'hero' | 'grid'
-  notchBg = '#0a0a0b',
+  notchBg = null,
+  notchClass = 'bg-white dark:bg-[#111113]',
 }) {
   const [imgStage, setImgStage] = useState(0);
   const cardRef = useRef(null);
@@ -409,10 +410,10 @@ function TicketCollectorCard({
         {/* 4 Authentic Ticket-Stub Side Notches (Top L/R, Bottom L/R) */}
         <span
           aria-hidden="true"
-          className={`pointer-events-none absolute -left-2 z-30 rounded-r-full ${notchSize}`}
+          className={`pointer-events-none absolute -left-2 z-30 rounded-r-full ${notchSize} ${notchBg ? '' : notchClass}`}
           style={{
             top: isHero ? '44px' : '26px',
-            backgroundColor: notchBg,
+            ...(notchBg ? { backgroundColor: notchBg } : {}),
             borderRight: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderTop: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderBottom: `${notchBorderPx} solid ${theme.notchBorder}`,
@@ -420,10 +421,10 @@ function TicketCollectorCard({
         />
         <span
           aria-hidden="true"
-          className={`pointer-events-none absolute -right-2 z-30 rounded-l-full ${notchSize}`}
+          className={`pointer-events-none absolute -right-2 z-30 rounded-l-full ${notchSize} ${notchBg ? '' : notchClass}`}
           style={{
             top: isHero ? '44px' : '26px',
-            backgroundColor: notchBg,
+            ...(notchBg ? { backgroundColor: notchBg } : {}),
             borderLeft: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderTop: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderBottom: `${notchBorderPx} solid ${theme.notchBorder}`,
@@ -431,10 +432,10 @@ function TicketCollectorCard({
         />
         <span
           aria-hidden="true"
-          className={`pointer-events-none absolute -left-2 z-30 rounded-r-full ${notchSize}`}
+          className={`pointer-events-none absolute -left-2 z-30 rounded-r-full ${notchSize} ${notchBg ? '' : notchClass}`}
           style={{
             bottom: isHero ? '44px' : '28px',
-            backgroundColor: notchBg,
+            ...(notchBg ? { backgroundColor: notchBg } : {}),
             borderRight: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderTop: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderBottom: `${notchBorderPx} solid ${theme.notchBorder}`,
@@ -442,10 +443,10 @@ function TicketCollectorCard({
         />
         <span
           aria-hidden="true"
-          className={`pointer-events-none absolute -right-2 z-30 rounded-l-full ${notchSize}`}
+          className={`pointer-events-none absolute -right-2 z-30 rounded-l-full ${notchSize} ${notchBg ? '' : notchClass}`}
           style={{
             bottom: isHero ? '44px' : '28px',
-            backgroundColor: notchBg,
+            ...(notchBg ? { backgroundColor: notchBg } : {}),
             borderLeft: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderTop: `${notchBorderPx} solid ${theme.notchBorder}`,
             borderBottom: `${notchBorderPx} solid ${theme.notchBorder}`,
@@ -506,11 +507,15 @@ function TicketCollectorCard({
               {team.abbr}
             </div>
 
-            {/* Top-Left Stacked Player Name & Position (Matches Yahoo Card Layout) */}
-            <div className={`relative z-20 ${isHero ? 'p-3.5 pb-0' : 'p-2 pb-0'} max-w-[65%]`}>
+            {/* Top-Left Stacked Player Name & Position (Floating Over Portrait Space Like Yahoo Card) */}
+            <div
+              className={`pointer-events-none absolute top-0 left-0 z-20 ${
+                isHero ? 'p-3.5 max-w-[56%]' : 'p-2 max-w-[64%]'
+              }`}
+            >
               {first && (
                 <div
-                  className={`font-display font-extrabold uppercase tracking-wide text-white/95 leading-none truncate ${
+                  className={`font-display font-extrabold uppercase tracking-wide text-white/95 drop-shadow-[0_2px_6px_rgba(0,0,0,0.85)] leading-none truncate ${
                     isHero ? 'text-xs' : 'text-[8px]'
                   }`}
                 >
@@ -518,14 +523,14 @@ function TicketCollectorCard({
                 </div>
               )}
               <div
-                className={`font-display font-black uppercase tracking-tight text-white group-hover:text-amber-200 transition-colors leading-tight truncate ${
+                className={`font-display font-black uppercase tracking-tight text-white group-hover:text-amber-200 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] transition-colors leading-tight truncate ${
                   isHero ? 'text-xl mt-0.5' : 'text-[11px]'
                 }`}
               >
                 {last}
               </div>
               <div
-                className={`font-stat font-semibold text-white/70 truncate ${
+                className={`font-stat font-semibold text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] truncate ${
                   isHero ? 'text-[10px]' : 'text-[7px]'
                 }`}
               >
@@ -533,8 +538,12 @@ function TicketCollectorCard({
               </div>
             </div>
 
-            {/* Centered Large Transparent MLB Upper-Body Cutout */}
-            <div className="relative z-10 flex-1 flex items-end justify-center overflow-hidden -mt-4">
+            {/* Full-Height Transparent MLB Upper-Body Cutout (Zero Hat Clipping!) */}
+            <div
+              className={`relative z-10 flex-1 min-h-0 flex items-end justify-center overflow-hidden ${
+                isHero ? 'pt-8 px-2' : 'pt-5 px-1'
+              }`}
+            >
               {imgUrl ? (
                 <img
                   src={imgUrl}
@@ -543,16 +552,14 @@ function TicketCollectorCard({
                   className={`object-contain object-bottom drop-shadow-[0_10px_22px_rgba(0,0,0,0.8)] ${
                     imgStage === 1
                       ? isHero
-                        ? 'w-36 h-36 rounded-full object-cover mb-2 border-2 border-white/30'
-                        : 'w-16 h-16 rounded-full object-cover mb-1 border border-white/30'
-                      : isHero
-                      ? 'h-[108%] w-auto max-w-[94%]'
-                      : 'h-[106%] w-auto max-w-[92%]'
+                        ? 'w-36 h-36 rounded-full object-cover mb-4 border-2 border-white/30'
+                        : 'w-16 h-16 rounded-full object-cover mb-2 border border-white/30'
+                      : 'max-h-full max-w-[92%] w-auto h-auto'
                   }`}
                 />
               ) : (
                 <div
-                  className={`${isHero ? 'w-28 h-28 text-3xl mb-3' : 'w-14 h-14 text-base mb-1'} rounded-full flex items-center justify-center font-display font-black text-white border-2 border-white/30`}
+                  className={`${isHero ? 'w-28 h-28 text-3xl mb-5' : 'w-14 h-14 text-base mb-2'} rounded-full flex items-center justify-center font-display font-black text-white border-2 border-white/30`}
                   style={{ backgroundColor: team.color }}
                 >
                   {initials}
@@ -741,13 +748,21 @@ export default function PackHub({
 
   useEffect(() => () => clearTimers(), []);
 
-  // Lock page scrolling while the full-screen Pack Theater is open
+  // Lock page scrolling & allow Escape key close while the Pack Theater is open
   useEffect(() => {
     if (rippingStage === 'idle') return undefined;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' && (rippingStage === 'choose' || rippingStage === 'revealed')) {
+        clearTimers();
+        setRippingStage('idle');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, [rippingStage]);
 
@@ -755,6 +770,7 @@ export default function PackHub({
     if (pendingReveal) {
       clearTimers();
       setRevealData(pendingReveal);
+      setLastRippedGame(pendingReveal.gamePk ? { gamePk: pendingReveal.gamePk } : null);
       setSelectedPackSlot(1);
       setFireworks([]);
       setRippingStage('choose');
@@ -804,11 +820,12 @@ export default function PackHub({
     setRippingStage('choose');
   };
 
-  // Triumph-Style Sequence: Select 1 of 3 Packs -> Energy Block + Fireworks -> Rapid Color-Cycling 3D Spin -> Color Lock -> Card Reveal!
+  // Triumph-Style Sequence: Select 1 of 3 Packs -> Selected Zoom -> Energy Block + Fireworks -> Rapid Color-Cycling 3D Spin -> Color Lock -> Card Reveal!
   const handleSelectCarouselPack = (slotIndex) => {
     if (!revealData || rippingStage !== 'choose') return;
     clearTimers();
     setSelectedPackSlot(slotIndex);
+    setRippingStage('selected');
 
     const rarity = RARITY_BY_ID[revealData.card?.rarityId] || RARITY_BY_ID.BASE;
     const theme = TICKET_THEME[rarity.id] || TICKET_THEME.BASE;
@@ -903,7 +920,7 @@ export default function PackHub({
   }, []);
 
   const handleRipFromGame = async (game) => {
-    if (!game?.gamePk) return;
+    if (!game?.gamePk || rippingGamePk) return;
     setPackError('');
     setRippingGamePk(game.gamePk);
     try {
@@ -1001,6 +1018,9 @@ export default function PackHub({
               </h2>
               <span className="px-2 py-0.5 rounded font-stat text-[10px] font-bold uppercase bg-red-600/15 text-red-500">
                 {CURRENT_SERIES}
+              </span>
+              <span className="px-1.5 py-0.5 rounded font-stat text-[9px] font-bold uppercase bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400">
+                v3.4
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1372,7 +1392,6 @@ export default function PackHub({
                 onExportPng={exportPulledCardPng}
                 TeamLogo={TeamLogo}
                 size="grid"
-                notchBg="#111113"
               />
             );
           })}
@@ -1448,7 +1467,6 @@ export default function PackHub({
                 onExportPng={exportPulledCardPng}
                 TeamLogo={TeamLogo}
                 size="grid"
-                notchBg="#111113"
               />
             ))}
           </div>
@@ -1462,7 +1480,7 @@ export default function PackHub({
           ================================================================= */}
       {rippingStage !== 'idle' && revealData && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-[100] h-[100dvh] w-screen flex items-center justify-center p-4 overflow-hidden transition-all duration-700"
+          className="fixed inset-0 z-[100] h-[100dvh] w-screen flex items-center justify-center p-4 overflow-y-auto overflow-x-hidden transition-all duration-700"
           style={{
             background:
               rippingStage === 'revealed'
@@ -1560,12 +1578,27 @@ export default function PackHub({
             className="relative z-20 w-full flex flex-col items-center justify-center"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* STAGE 1: TRIUMPH 3-PACK FOIL CAROUSEL ("Tap to select a pack to open") */}
+            {/* Close button on Choose stage so user is never trapped */}
             {rippingStage === 'choose' && (
+              <button
+                type="button"
+                onClick={() => {
+                  clearTimers();
+                  setRippingStage('idle');
+                }}
+                aria-label="Close pack selector"
+                className="fixed top-5 right-5 z-40 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md flex items-center justify-center text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+
+            {/* STAGE 1 & 1.5: TRIUMPH 3-PACK FOIL CAROUSEL -> SELECTED PACK ZOOM */}
+            {(rippingStage === 'choose' || rippingStage === 'selected') && (
               <div className="w-full max-w-3xl text-center space-y-6 animate-fade-up">
                 <div className="space-y-1">
                   <p className="font-display text-lg sm:text-xl font-bold text-white/90 tracking-tight">
-                    Tap to select a pack to open
+                    {rippingStage === 'selected' ? `Opening Pack #${selectedPackSlot + 1}...` : 'Tap to select a pack to open'}
                   </p>
                   <p className="font-stat text-[11px] uppercase tracking-[0.2em] text-amber-300/80">
                     {revealData.packTitle} • {revealData.packSubtitle}
@@ -1575,6 +1608,8 @@ export default function PackHub({
                 <div className="flex items-center justify-center gap-3 sm:gap-6 px-2">
                   {[0, 1, 2].map((slotIdx) => {
                     const isCenter = slotIdx === 1;
+                    const isPicked = rippingStage === 'selected' && selectedPackSlot === slotIdx;
+                    const isFadedOut = rippingStage === 'selected' && selectedPackSlot !== slotIdx;
                     const packClass =
                       revealData.packTheme === 'crimson'
                         ? 'hst-triumph-pack-crimson'
@@ -1583,9 +1618,14 @@ export default function PackHub({
                       <button
                         key={slotIdx}
                         type="button"
+                        disabled={rippingStage !== 'choose'}
                         onClick={() => handleSelectCarouselPack(slotIdx)}
                         className={`group relative rounded-xl overflow-hidden border border-amber-200/35 transition-all duration-300 cursor-pointer focus:outline-none ${packClass} ${
-                          isCenter
+                          isPicked
+                            ? 'w-[165px] sm:w-[220px] h-[270px] sm:h-[360px] scale-110 -translate-y-3 z-30 shadow-[0_0_60px_rgba(250,204,21,0.7)]'
+                            : isFadedOut
+                            ? 'w-[120px] sm:w-[185px] h-[210px] sm:h-[310px] opacity-0 scale-90 pointer-events-none z-0'
+                            : isCenter
                             ? 'w-[165px] sm:w-[220px] h-[270px] sm:h-[360px] scale-100 z-20 hover:scale-105 hover:-translate-y-2'
                             : 'w-[120px] sm:w-[185px] h-[210px] sm:h-[310px] opacity-70 hover:opacity-100 hover:scale-105 hover:-translate-y-1.5 z-10'
                         }`}
@@ -1684,7 +1724,7 @@ export default function PackHub({
 
             {/* STAGE 5: FULL-SCREEN TICKET-STUB COLLECTOR CARD REVEAL (Yahoo Sports Style) */}
             {rippingStage === 'revealed' && (
-              <div className="w-full max-w-[336px] flex flex-col items-center space-y-5 pt-6">
+              <div className="w-full max-w-[308px] sm:max-w-[332px] flex flex-col items-center space-y-4 pt-8 pb-4">
                 <div className="w-full animate-final-flip">
                   <TicketCollectorCard
                     card={revealData.card}
@@ -1723,11 +1763,18 @@ export default function PackHub({
                     {vault.testMode && (
                       <button
                         type="button"
+                        disabled={Boolean(rippingGamePk)}
                         onClick={() => (lastRippedGame ? handleRipFromGame(lastRippedGame) : handleRipHotStove())}
-                        className="inline-flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition"
+                        className="inline-flex items-center gap-1.5 text-amber-300 hover:text-amber-200 disabled:opacity-50 transition"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>{lastRippedGame ? 'Rip Same Game Again' : 'Rip Another Pack'}</span>
+                        <span>
+                          {rippingGamePk
+                            ? 'Loading Pack...'
+                            : lastRippedGame
+                            ? 'Rip Same Game Again'
+                            : 'Rip Another Pack'}
+                        </span>
                       </button>
                     )}
                     <button
