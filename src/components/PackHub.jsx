@@ -21,6 +21,18 @@ import { exportPulledCardPng, exportShowcasePng } from '../lib/cardExporter';
 import { getTeamInfo } from '../data/mlbData';
 
 // =========================================================================
+// SANDBOX MASTER SWITCH — Set to `false` (or delete sandbox blocks) when ready
+// Regular visitors NEVER see Sandbox Mode; unlock via ?sandbox=1 or 5-clicking the Series pill.
+// =========================================================================
+const ENABLE_SANDBOX_MODE = true;
+
+function getDaysUntil(isoDateStr, nowMs) {
+  const target = new Date(`${isoDateStr}T12:00:00Z`).getTime();
+  const diff = Math.ceil((target - nowMs) / (24 * 60 * 60 * 1000));
+  return Math.max(0, diff);
+}
+
+// =========================================================================
 // ZERO-DEPENDENCY WEB AUDIO PACK SOUND SYNTHESIZER (Triumph-Inspired Audio)
 // =========================================================================
 function playPackSound(type, payload = 1, muted = false) {
@@ -712,6 +724,40 @@ export default function PackHub({
   const [replayGames, setReplayGames] = useState([]);
   const [loadingReplayGames, setLoadingReplayGames] = useState(false);
   const [rippingGamePk, setRippingGamePk] = useState(null);
+  const secretTapRef = useRef({ count: 0, lastAt: 0 });
+
+  const sandboxActive = ENABLE_SANDBOX_MODE && Boolean(vault.testMode);
+
+  // Auto-enable Sandbox Mode if you visit ?sandbox=1 (and turn off if ENABLE_SANDBOX_MODE is false)
+  useEffect(() => {
+    if (!ENABLE_SANDBOX_MODE) {
+      if (vault.testMode) setVault((prev) => ({ ...prev, testMode: false }));
+      return;
+    }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('sandbox') === '1' && !vault.testMode) {
+        setVault((prev) => ({ ...prev, testMode: true }));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleSecretSeriesTap = () => {
+    if (!ENABLE_SANDBOX_MODE) return;
+    const now = Date.now();
+    if (now - secretTapRef.current.lastAt > 2000) {
+      secretTapRef.current = { count: 1, lastAt: now };
+      return;
+    }
+    secretTapRef.current.count += 1;
+    secretTapRef.current.lastAt = now;
+    if (secretTapRef.current.count >= 5) {
+      secretTapRef.current = { count: 0, lastAt: 0 };
+      setVault((prev) => ({ ...prev, testMode: !prev.testMode }));
+    }
+  };
 
   const timersRef = useRef([]);
 
@@ -893,10 +939,10 @@ export default function PackHub({
   };
 
   useEffect(() => {
-    if ((!liveGames || liveGames.length === 0) && replayGames.length === 0) {
+    if (sandboxActive && (!liveGames || liveGames.length === 0) && replayGames.length === 0) {
       loadReplaySlate(CLASSIC_TEST_GAMES[0].date);
     }
-  }, []);
+  }, [sandboxActive, liveGames]);
 
   const handleRipFromGame = async (game) => {
     if (!game?.gamePk || rippingGamePk) return;
@@ -964,8 +1010,11 @@ export default function PackHub({
     setEditingHandle(false);
   };
 
-  const displayedGames = liveGames && liveGames.length > 0 ? liveGames : replayGames;
-  const usingReplayGames = !liveGames || liveGames.length === 0;
+  const hasRealGamesToday = Array.isArray(liveGames) && liveGames.length > 0;
+  const displayedGames = hasRealGamesToday ? liveGames : sandboxActive ? replayGames : [];
+  const usingReplayGames = !hasRealGamesToday && sandboxActive;
+  const daysToSpring = getDaysUntil('2027-02-19', nowMs);
+  const daysToOpening = getDaysUntil('2027-03-24', nowMs);
 
   const revealRarity = revealData?.card ? RARITY_BY_ID[revealData.card.rarityId] || RARITY_BY_ID.BASE : RARITY_BY_ID.BASE;
   const revealTheme = TICKET_THEME[revealRarity.id] || TICKET_THEME.BASE;
@@ -995,12 +1044,14 @@ export default function PackHub({
                 <Package className="w-5 h-5 text-sky-500" />
                 <span>Packs &amp; Collector Binder</span>
               </h2>
-              <span className="px-2 py-0.5 rounded font-stat text-[10px] font-bold uppercase bg-red-600/15 text-red-500">
+              <button
+                type="button"
+                onClick={handleSecretSeriesTap}
+                className="px-2 py-0.5 rounded font-stat text-[10px] font-bold uppercase bg-red-600/15 text-red-500 cursor-default select-none"
+                title={CURRENT_SERIES}
+              >
                 {CURRENT_SERIES}
-              </span>
-              <span className="px-1.5 py-0.5 rounded font-stat text-[9px] font-bold uppercase bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400">
-                v3.5
-              </span>
+              </button>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Pick 1 of 3 foil packs every 6 hours • Rarity roulette reveal • Ticket-stub collector cards (/99, /25, /10, 1/1)
@@ -1052,26 +1103,22 @@ export default function PackHub({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() =>
-              setVault((prev) => ({ ...prev, testMode: !prev.testMode }))
-            }
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
-              vault.testMode
-                ? 'border-amber-500/60 bg-amber-500/15 text-amber-500'
-                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-slate-200'
-            }`}
-            title="Enable Sandbox Test Mode to bypass the 6-hour timer and preview every rarity spin"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>{vault.testMode ? 'Test Mode: ON' : 'Test Mode'}</span>
-          </button>
+          {sandboxActive && (
+            <button
+              type="button"
+              onClick={() => setVault((prev) => ({ ...prev, testMode: false }))}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-500/60 bg-amber-500/15 text-amber-500 hover:bg-amber-500/25 transition"
+              title="Exit Sandbox Mode and view exactly what regular visitors see"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Exit Sandbox</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Sandbox Controls */}
-      {vault.testMode && (
+      {/* === SANDBOX ONLY (Delete when ready) === */}
+      {sandboxActive && (
         <div className="p-3.5 rounded-lg border border-amber-500/40 bg-amber-500/10 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-stat font-extrabold uppercase text-[11px] text-amber-500">
@@ -1185,7 +1232,7 @@ export default function PackHub({
               <Clock className={`w-4 h-4 ${packReady ? 'text-emerald-500' : 'text-slate-400'}`} />
               {packReady ? (
                 <span className="font-bold text-emerald-500">
-                  {vault.testMode ? 'Ready (Test Mode)' : 'Pack Ready Now'}
+                  {sandboxActive ? 'Ready (Sandbox)' : 'Pack Ready Now'}
                 </span>
               ) : (
                 <span className="text-slate-400">
@@ -1209,21 +1256,35 @@ export default function PackHub({
         <div className="lg:col-span-7 p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between gap-4">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded font-stat text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/15 text-emerald-500">
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded font-stat text-[10px] font-extrabold uppercase tracking-wider ${
+                  hasRealGamesToday
+                    ? 'bg-emerald-500/15 text-emerald-500'
+                    : usingReplayGames
+                    ? 'bg-amber-500/15 text-amber-500'
+                    : 'bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-300'
+                }`}
+              >
                 <Calendar className="w-3 h-3" />
-                {usingReplayGames ? '2026 Classic Replay (Offseason Tester)' : 'Live MLB Game Check-In'}
+                {hasRealGamesToday
+                  ? "Today's Live MLB Slate"
+                  : usingReplayGames
+                  ? 'Sandbox: 2026 Classic Replay'
+                  : 'MLB Offseason • Returns Spring 2027'}
               </span>
               <span className="font-stat text-[11px] text-slate-400">
-                Stamped with exact matchup &amp; score
+                1 pull per game • Stamped with live stats &amp; score
               </span>
             </div>
 
             <div>
-              <h3 className="text-lg font-black">Game Box-Score Pack</h3>
+              <h3 className="text-lg font-black">Live Game Check-In Pack</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {usingReplayGames
-                  ? 'No live MLB games are scheduled right now—rip packs from 2026 World Series & classic games to see the full scoreboard ticket stub in action.'
-                  : 'Check into any live or final MLB game to pull 1 player who appeared in that box score, stamped with their stat line and score.'}
+                {hasRealGamesToday
+                  ? 'Follow any live or completed game today to rip 1 player who appeared in that box score, stamped with their exact game line and matchup score.'
+                  : usingReplayGames
+                  ? 'Sandbox Mode active — test the exact live box-score pack engine using 2026 World Series & regular-season games.'
+                  : 'During Spring Training and the MLB season, every live game unlocks a box-score pack stamped with that player’s exact performance and final score.'}
               </p>
             </div>
 
@@ -1236,7 +1297,7 @@ export default function PackHub({
                     onClick={() => loadReplaySlate(g.date)}
                     className={`px-2.5 py-1 rounded-md font-stat text-[11px] font-bold border transition ${
                       selectedReplayDate === g.date
-                        ? 'border-red-500/60 bg-red-500/15 text-red-500 dark:text-red-400'
+                        ? 'border-amber-500/60 bg-amber-500/15 text-amber-500'
                         : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-500 hover:border-slate-400'
                     }`}
                   >
@@ -1246,7 +1307,53 @@ export default function PackHub({
               </div>
             )}
 
-            {loadingReplayGames ? (
+            {!hasRealGamesToday && !sandboxActive ? (
+              /* Clean Production Offseason State for Regular Visitors */
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800">
+                    <div className="font-stat text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Spring Training
+                    </div>
+                    <div className="font-stat text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                      {daysToSpring} <span className="text-xs font-bold text-slate-400">days</span>
+                    </div>
+                    <div className="font-stat text-[10px] text-slate-500">Feb 19, 2027</div>
+                  </div>
+
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800">
+                    <div className="font-stat text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Opening Day
+                    </div>
+                    <div className="font-stat text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                      {daysToOpening} <span className="text-xs font-bold text-slate-400">days</span>
+                    </div>
+                    <div className="font-stat text-[10px] text-slate-500">Mar 24, 2027</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                  <div className="p-2.5 rounded-lg bg-slate-50/70 dark:bg-slate-950/70 border border-slate-200/70 dark:border-slate-800/80">
+                    <div className="font-stat text-[10px] font-extrabold text-red-500">01 • CHECK IN LIVE</div>
+                    <p className="text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                      Open any live or final MLB game in Scores or right here.
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-50/70 dark:bg-slate-950/70 border border-slate-200/70 dark:border-slate-800/80">
+                    <div className="font-stat text-[10px] font-extrabold text-red-500">02 • RIP 1 PLAYER</div>
+                    <p className="text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                      Pull 1 mystery player who actually played in that box score.
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-50/70 dark:bg-slate-950/70 border border-slate-200/70 dark:border-slate-800/80">
+                    <div className="font-stat text-[10px] font-extrabold text-red-500">03 • TICKET STAMP</div>
+                    <p className="text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                      Card locks in their exact game stats, date &amp; matchup score.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : loadingReplayGames ? (
               <div className="py-6 text-center font-stat text-xs text-slate-400">
                 Loading MLB box scores for {selectedReplayDate}...
               </div>
@@ -1255,11 +1362,13 @@ export default function PackHub({
                 No games found for this date. Pick another classic slate above.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto pr-1">
-                {displayedGames.slice(0, 6).map((g) => {
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                {displayedGames.slice(0, 8).map((g) => {
                   const aw = getTeamInfo(g.away?.abbr);
                   const hm = getTeamInfo(g.home?.abbr);
-                  const alreadyClaimed = !vault.testMode && vault.claimedGamePks.includes(String(g.gamePk));
+                  const isLive = g.abstractState === 'Live';
+                  const isPreview = hasRealGamesToday && g.abstractState === 'Preview';
+                  const alreadyClaimed = !sandboxActive && vault.claimedGamePks.includes(String(g.gamePk));
                   const busy = rippingGamePk === g.gamePk;
                   return (
                     <div
@@ -1274,23 +1383,30 @@ export default function PackHub({
                       >
                         <div className="flex items-center gap-1.5 font-stat text-xs font-extrabold">
                           {TeamLogo && <TeamLogo abbr={aw.abbr} size="xs" className="!w-4 !h-4" />}
-                          <span>{aw.abbr} {g.away?.runs ?? ''}</span>
+                          <span>{aw.abbr} {isPreview ? '' : (g.away?.runs ?? '')}</span>
                           <span className="text-slate-400">@</span>
                           {TeamLogo && <TeamLogo abbr={hm.abbr} size="xs" className="!w-4 !h-4" />}
-                          <span>{hm.abbr} {g.home?.runs ?? ''}</span>
+                          <span>{hm.abbr} {isPreview ? '' : (g.home?.runs ?? '')}</span>
                         </div>
-                        <div className="text-[10px] font-stat text-slate-400 truncate mt-0.5 group-hover:text-sky-500">
-                          {g.status || 'Final'} • View Box Score
+                        <div className="flex items-center gap-1.5 text-[10px] font-stat text-slate-400 truncate mt-0.5 group-hover:text-sky-500">
+                          {isLive && (
+                            <span className="inline-flex items-center gap-1 text-emerald-500 font-extrabold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              LIVE
+                            </span>
+                          )}
+                          <span>{g.status || 'Final'} • Box Score</span>
                         </div>
                       </button>
 
                       <button
                         type="button"
-                        disabled={!packReady || alreadyClaimed || busy}
+                        disabled={!packReady || alreadyClaimed || busy || isPreview}
                         onClick={() => handleRipFromGame(g)}
+                        title={isPreview ? 'Unlocks once first pitch is thrown' : 'Rip 1 player from this game'}
                         className="px-2.5 py-1.5 rounded-md font-stat text-[10px] font-extrabold bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition shrink-0"
                       >
-                        {busy ? 'Loading...' : alreadyClaimed ? 'Claimed' : 'Open Pack'}
+                        {busy ? 'Loading...' : isPreview ? 'Pre-Game' : alreadyClaimed ? 'Claimed' : 'Rip Pack'}
                       </button>
                     </div>
                   );
@@ -1739,7 +1855,7 @@ export default function PackHub({
                   </button>
 
                   <div className="flex items-center justify-center gap-5 pt-1 text-xs font-bold">
-                    {vault.testMode && (
+                    {sandboxActive && (
                       <button
                         type="button"
                         disabled={Boolean(rippingGamePk)}
