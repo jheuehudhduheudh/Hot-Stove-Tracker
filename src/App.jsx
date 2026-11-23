@@ -1008,8 +1008,20 @@ export default function App() {
     setSelectedGamePk(null);
     setPacksOpen(true);
     setPackNowMs(Date.now());
+    if (games.length === 0) {
+      fetchScores(getLocalDateStr(), true);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // Auto-open Packs in Sandbox Mode when visiting ?sandbox=1
+  useEffect(() => {
+    const params = getInitialUrlParams();
+    if (params.get('sandbox') === '1') {
+      setPackVault((prev) => ({ ...prev, testMode: true }));
+      setPacksOpen(true);
+    }
+  }, []);
 
   const handleRipFromOpenBoxScore = () => {
     if (!boxScore || !selectedGamePk) return;
@@ -5981,7 +5993,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleRipFromOpenBoxScore}
-                    disabled={!isPackReady || (!packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk)))}
+                    disabled={!isPackReady || (!packVault.testMode && (boxScore.abstractState === 'Preview' || packVault.claimedGamePks.includes(String(selectedGamePk))))}
                     title={
                       !packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk))
                         ? 'Pack already claimed from this game'
