@@ -1033,8 +1033,9 @@ export default function App() {
     setPendingPackReveal({
       card: res.card,
       isDuplicate: res.isDuplicate,
-      packTitle: `${boxScore.away?.abbr || 'AWY'} @ ${boxScore.home?.abbr || 'HME'} Game Pack`,
-      packSubtitle: `Pulled from ${pool.length} players who appeared in this box score`,
+      packTitle: `${boxScore.away?.abbr || 'AWY'} @ ${boxScore.home?.abbr || 'HME'} GAME PACK`,
+      packSubtitle: `${pool.length} players from this box score`,
+      packTheme: 'crimson',
     });
     setSelectedGamePk(null);
     setSelectedPlayer(null);
