@@ -350,9 +350,9 @@
   clip-path: polygon(8% 0%, 100% 0%, 92% 100%, 0% 100%);
 }
 
-/* Curved Top-Right Bevel Window */
+/* Symmetrical Collector Window */
 .hst-inner-window {
-  border-top-right-radius: 26px;
+  border-radius: 14px;
 }
 
 /* ---- 6 RARITY TICKET FINISHES ---- */
@@ -437,22 +437,22 @@
 }
 
 .hst-ticket-SCRIPT_10 {
-  --card-border: #f59e0b;
-  --card-surface: #38230a;
-  --card-headline: #fde68a;
-  --card-glow: rgba(245, 158, 11, 0.72);
-  border: 3.5px solid #fbbf24;
-  background: linear-gradient(155deg, #4a2d0a 0%, #1d140a 55%, #3a2308 100%);
-  box-shadow: 0 22px 56px -8px rgba(245, 158, 11, 0.7), 0 0 0 1px rgba(254, 243, 199, 0.45);
+  --card-border: #38bdf8;
+  --card-surface: #0b2247;
+  --card-headline: #bae6fd;
+  --card-glow: rgba(56, 189, 248, 0.72);
+  border: 3.5px solid #38bdf8;
+  background: linear-gradient(155deg, #0d2f63 0%, #09162e 55%, #0c2652 100%);
+  box-shadow: 0 22px 56px -8px rgba(37, 99, 235, 0.72), 0 0 0 1px rgba(186, 230, 253, 0.45);
 }
 .hst-ticket-SCRIPT_10 .hst-tcg-foil {
-  opacity: 0.5;
+  opacity: 0.52;
   background: linear-gradient(
     115deg,
-    transparent 14%,
-    rgba(251, 191, 36, 0.58) 34%,
-    rgba(255, 251, 235, 0.65) 50%,
-    rgba(217, 119, 6, 0.52) 66%,
+    transparent 12%,
+    rgba(56, 189, 248, 0.58) 32%,
+    rgba(224, 242, 254, 0.68) 48%,
+    rgba(59, 130, 246, 0.55) 64%,
     transparent 86%
   );
   background-size: 250% 250%;
