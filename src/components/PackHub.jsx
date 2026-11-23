@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft, Package, Sparkles, Pin, Download, Clock, RotateCcw,
   Search, Layers, Check, X, Flame, Calendar, User, Volume2, VolumeX,
@@ -166,6 +167,8 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #5c0c16 0%, #1d0509 55%, #070405 100%)',
     headlineColor: '#fca5a5',
     notchBorder: '#ef4444',
+    heroNotchBg: '#26070d',
+    heroNotchBg: '#1b0509',
     particles: 56,
     sparkColors: ['#ef4444', '#ffffff', '#fca5a5', '#f59e0b'],
   },
@@ -179,6 +182,7 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #5e3809 0%, #241404 55%, #090603 100%)',
     headlineColor: '#fde68a',
     notchBorder: '#fbbf24',
+    heroNotchBg: '#231404',
     particles: 48,
     sparkColors: ['#fbbf24', '#fef08a', '#ffffff', '#f59e0b'],
   },
@@ -192,6 +196,7 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #5a1822 0%, #2b0b12 55%, #0d0507 100%)',
     headlineColor: '#f5df98',
     notchBorder: '#ead28f',
+    heroNotchBg: '#2a0b12',
     particles: 40,
     sparkColors: ['#facc15', '#fef08a', '#ffffff', '#eab308'],
   },
@@ -218,6 +223,7 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #371b63 0%, #160c29 55%, #08050f 100%)',
     headlineColor: '#e9d5ff',
     notchBorder: '#c4b5fd',
+    heroNotchBg: '#170c2a',
     particles: 28,
     sparkColors: ['#a78bfa', '#38bdf8', '#f472b6', '#34d399', '#ffffff'],
   },
@@ -231,6 +237,7 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #27272f 0%, #121216 55%, #070709 100%)',
     headlineColor: '#f4f4f5',
     notchBorder: '#71717a',
+    heroNotchBg: '#121216',
     particles: 16,
     sparkColors: ['#e4e4e7', '#a1a1aa', '#ffffff'],
   },
@@ -350,7 +357,7 @@ function TicketCollectorCard({
 
   const imgUrl =
     imgStage === 0 && card.playerId
-      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_426,q_auto:best/v1/people/${card.playerId}/headshot/67/current`
+      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:silo:current.png/w_640,q_auto:best/v1/people/${card.playerId}/headshot/silo/current.png`
       : imgStage === 1 && card.playerId
       ? `https://midfield.mlbstatic.com/v1/people/${card.playerId}/spots/213`
       : null;
@@ -472,10 +479,10 @@ function TicketCollectorCard({
 
         {/* CENTER BEVELED COLLECTOR WINDOW */}
         <div className={`relative z-20 flex-1 flex flex-col min-h-0 ${isHero ? 'px-3.5 py-2.5' : 'px-2 py-1.5'}`}>
-          {/* Small Brand Mark tucked in top-right outside corner (like y!) */}
+          {/* Small Brand Mark tucked cleanly into top-right corner */}
           <div
-            className={`pointer-events-none absolute z-30 font-display font-black italic tracking-tighter ${
-              isHero ? 'top-2.5 right-4 text-xs' : 'top-1.5 right-2.5 text-[8px]'
+            className={`pointer-events-none absolute z-30 font-display font-black italic tracking-tighter drop-shadow ${
+              isHero ? 'top-4 right-5 text-xs' : 'top-2.5 right-3 text-[7px]'
             }`}
             style={{ color: theme.headlineColor }}
           >
@@ -533,12 +540,14 @@ function TicketCollectorCard({
                   src={imgUrl}
                   alt={card.fullName}
                   onError={() => setImgStage((s) => s + 1)}
-                  className={`object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.75)] ${
+                  className={`object-contain object-bottom drop-shadow-[0_10px_22px_rgba(0,0,0,0.8)] ${
                     imgStage === 1
                       ? isHero
                         ? 'w-36 h-36 rounded-full object-cover mb-2 border-2 border-white/30'
                         : 'w-16 h-16 rounded-full object-cover mb-1 border border-white/30'
-                      : 'h-[112%] w-auto max-w-[92%]'
+                      : isHero
+                      ? 'h-[108%] w-auto max-w-[94%]'
+                      : 'h-[106%] w-auto max-w-[92%]'
                   }`}
                 />
               ) : (
@@ -728,7 +737,19 @@ export default function PackHub({
     timersRef.current = [];
   };
 
+  const [lastRippedGame, setLastRippedGame] = useState(null);
+
   useEffect(() => () => clearTimers(), []);
+
+  // Lock page scrolling while the full-screen Pack Theater is open
+  useEffect(() => {
+    if (rippingStage === 'idle') return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [rippingStage]);
 
   useEffect(() => {
     if (pendingReveal) {
@@ -846,6 +867,7 @@ export default function PackHub({
       return;
     }
     setVault(result.vault);
+    setLastRippedGame(null);
     launchPackCarousel({
       card: result.card,
       isDuplicate: result.isDuplicate,
@@ -909,6 +931,7 @@ export default function PackHub({
         return;
       }
       setVault(result.vault);
+      setLastRippedGame(game);
       launchPackCarousel({
         card: result.card,
         isDuplicate: result.isDuplicate,
@@ -957,7 +980,7 @@ export default function PackHub({
       : ROULETTE_CYCLE_COLORS[spinColorIdx % ROULETTE_CYCLE_COLORS.length];
 
   return (
-    <div className="space-y-6 animate-fade-up">
+    <div className="space-y-6">
       {/* Top Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -1434,10 +1457,12 @@ export default function PackHub({
 
       {/* =================================================================
           TRIUMPH-STYLE PACK CAROUSEL + ROULETTE SPIN + TICKET CARD STAGE
+          Mounted directly to document.body via createPortal so it is ALWAYS
+          centered in your viewport with zero scrolling required!
           ================================================================= */}
-      {rippingStage !== 'idle' && revealData && (
+      {rippingStage !== 'idle' && revealData && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-hidden transition-all duration-700"
+          className="fixed inset-0 z-[100] h-[100dvh] w-screen flex items-center justify-center p-4 overflow-hidden transition-all duration-700"
           style={{
             background:
               rippingStage === 'revealed'
@@ -1673,7 +1698,7 @@ export default function PackHub({
                     onExportPng={exportPulledCardPng}
                     TeamLogo={TeamLogo}
                     size="hero"
-                    notchBg="#220c12"
+                    notchBg={revealTheme.heroNotchBg}
                   />
                 </div>
 
@@ -1698,11 +1723,11 @@ export default function PackHub({
                     {vault.testMode && (
                       <button
                         type="button"
-                        onClick={handleRipHotStove}
+                        onClick={() => (lastRippedGame ? handleRipFromGame(lastRippedGame) : handleRipHotStove())}
                         className="inline-flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Rip Another Pack</span>
+                        <span>{lastRippedGame ? 'Rip Same Game Again' : 'Rip Another Pack'}</span>
                       </button>
                     )}
                     <button
@@ -1720,7 +1745,8 @@ export default function PackHub({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
