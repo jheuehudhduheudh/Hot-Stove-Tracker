@@ -4,10 +4,12 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale, Package
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { exportPlayerCardPng, exportCompareCardPng } from './lib/cardExporter';
+import PackHub from './components/PackHub';
+import { loadPackVault, savePackVault, getCooldownRemainingMs, formatCooldownShort, buildBoxScorePool, ripSinglePack, CURRENT_SERIES } from './lib/packEngine';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
@@ -982,9 +984,69 @@ export default function App() {
   const [tabDirection, setTabDirection] = useState('right');
   const [, setClockTick] = useState(0);
 
+  // Card Packs & Collector Binder state (v3.0)
+  const [packsOpen, setPacksOpen] = useState(false);
+  const [packVault, setPackVault] = useState(() => loadPackVault());
+  const [packNowMs, setPackNowMs] = useState(() => Date.now());
+  const [pendingPackReveal, setPendingPackReveal] = useState(null);
+
+  useEffect(() => {
+    savePackVault(packVault);
+  }, [packVault]);
+
+  useEffect(() => {
+    const id = setInterval(() => setPackNowMs(Date.now()), 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  const packCooldownMs = getCooldownRemainingMs(packVault, packNowMs);
+  const isPackReady = packCooldownMs <= 0;
+
+  const openPacksView = () => {
+    setSelectedPlayer(null);
+    setCompareOpen(false);
+    setSelectedGamePk(null);
+    setPacksOpen(true);
+    setPackNowMs(Date.now());
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleRipFromOpenBoxScore = () => {
+    if (!boxScore || !selectedGamePk) return;
+    const pool = buildBoxScorePool(boxScore);
+    if (pool.length === 0) {
+      setSyncNotice('No players have appeared in this box score yet.');
+      return;
+    }
+    const res = ripSinglePack({
+      vault: packVault,
+      pool,
+      packMode: 'GAME_CHECKIN',
+      gamePk: selectedGamePk,
+      series: CURRENT_SERIES,
+    });
+    if (!res.ok) {
+      setSyncNotice(res.error);
+      return;
+    }
+    setPackVault(res.vault);
+    setPendingPackReveal({
+      card: res.card,
+      isDuplicate: res.isDuplicate,
+      packTitle: `${boxScore.away?.abbr || 'AWY'} @ ${boxScore.home?.abbr || 'HME'} Game Pack`,
+      packSubtitle: `Pulled from ${pool.length} players who appeared in this box score`,
+    });
+    setSelectedGamePk(null);
+    setSelectedPlayer(null);
+    setCompareOpen(false);
+    setPacksOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const switchMainTab = (nextTab) => {
     setSelectedPlayer(null);
     setCompareOpen(false);
+    setPacksOpen(false);
     setActiveTab((prev) => {
       if (prev !== nextTab) {
         const prevIdx = MAIN_TAB_ORDER.indexOf(prev);
@@ -1151,6 +1213,7 @@ export default function App() {
     if (!abbr || abbr === 'MLB') return;
     setSelectedPlayer(null);
     setCompareOpen(false);
+    setPacksOpen(false);
     setSelectedGamePk(null);
     setHubTeam(abbr);
     setHubRosterSearch('');
@@ -1174,6 +1237,7 @@ export default function App() {
     const reqId = ++profileReqIdRef.current;
     setSelectedGamePk(null);
     setCompareOpen(false);
+    setPacksOpen(false);
     setHeroImgError(false);
     setSelectedPlayer({ playerId, playerName, teamAbbr });
     setProfileSubTab('overview');
@@ -1319,6 +1383,7 @@ export default function App() {
   const openCompareView = (initialPlayerData = null) => {
     setSelectedPlayer(null);
     setCompareOpen(false);
+    setPacksOpen(false);
     setSelectedGamePk(null);
     setCompareOpen(true);
     setCompareSearchQuery('');
@@ -2020,7 +2085,7 @@ export default function App() {
             variant="nav"
             className="hidden lg:inline-flex h-14"
             value={activeTab}
-            hiddenIndicator={Boolean(selectedPlayer || compareOpen)}
+            hiddenIndicator={Boolean(selectedPlayer || compareOpen || packsOpen)}
             onChange={switchMainTab}
             options={[
               { id: 'feed', label: 'Live Feed' },
@@ -2033,6 +2098,28 @@ export default function App() {
           />
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={openPacksView}
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
+                packsOpen
+                  ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                  : isPackReady
+                  ? 'border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400 hover:border-red-500'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
+              }`}
+              title="Open 6-hour Mystery Player Packs & Collector Showcase"
+            >
+              <span className="relative inline-flex">
+                <Package className="w-3.5 h-3.5 text-sky-500" />
+                {isPackReady && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                )}
+              </span>
+              <span className="hidden xl:inline font-stat text-xs">
+                {isPackReady ? 'Packs' : formatCooldownShort(packCooldownMs)}
+              </span>
+            </button>
+
             <button
               onClick={() => openCompareView(null)}
               className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
@@ -2148,7 +2235,7 @@ export default function App() {
       </header>
 
       {syncNotice && (
-        <div className="bg-sky-500/10 border-b border-sky-500/20 px-4 py-2 text-xs text-center text-sky-700 dark:text-sky-300 flex items-center justify-center gap-3">
+        <div className="bg-red-500/10 border-b border-red-500/25 px-4 py-2 text-xs font-semibold text-center text-red-700 dark:text-red-300 flex items-center justify-center gap-3">
           <span>{syncNotice}</span>
           <button
             onClick={() => setSyncNotice('')}
@@ -2160,8 +2247,23 @@ export default function App() {
       )}
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6 overflow-x-clip">
-        {/* SIDE-BY-SIDE PLAYER COMPARISON VIEW */}
-        {compareOpen ? (() => {
+        {/* PACKS & COLLECTOR SHOWCASE VIEW */}
+        {packsOpen ? (
+          <PackHub
+            vault={packVault}
+            setVault={setPackVault}
+            nowMs={packNowMs}
+            freeAgents={freeAgents.length > 0 ? freeAgents : sidebarFreeAgents}
+            transactions={transactions}
+            liveGames={games}
+            onBack={() => setPacksOpen(false)}
+            onOpenPlayer={openPlayerModal}
+            onOpenBoxScore={openBoxScore}
+            TeamLogo={TeamLogo}
+            pendingReveal={pendingPackReveal}
+            setPendingReveal={setPendingPackReveal}
+          />
+        ) : compareOpen ? (() => {
           const [pA, pB] = comparePlayers;
           const isPitchCmp = compareStatGroup === 'pitching';
           const grpKey = isPitchCmp ? 'pitching' : 'hitting';
@@ -5659,7 +5761,7 @@ export default function App() {
       </footer>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
-        {!selectedPlayer && !compareOpen && (
+        {!selectedPlayer && !compareOpen && !packsOpen && (
           <span
             aria-hidden="true"
             className="pointer-events-none absolute top-0 left-0 h-0.5 w-1/6 bg-sky-500 rounded-full hst-sliding-pill"
@@ -5675,7 +5777,7 @@ export default function App() {
           { id: 'leaderboard', label: 'Spend', icon: Trophy },
         ].map((item) => {
           const Icon = item.icon;
-          const active = !selectedPlayer && !compareOpen && activeTab === item.id;
+          const active = !selectedPlayer && !compareOpen && !packsOpen && activeTab === item.id;
           return (
             <button
               key={item.id}
@@ -5873,6 +5975,30 @@ export default function App() {
                 )}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
+                {boxScore && (
+                  <button
+                    type="button"
+                    onClick={handleRipFromOpenBoxScore}
+                    disabled={!isPackReady || (!packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk)))}
+                    title={
+                      !packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk))
+                        ? 'Pack already claimed from this game'
+                        : isPackReady
+                        ? 'Rip 1 mystery player pack from this game box score'
+                        : `Next pack ready in ${formatCooldownShort(packCooldownMs)}`
+                    }
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-extrabold bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-45 transition"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">
+                      {!packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk))
+                        ? 'Claimed'
+                        : isPackReady
+                        ? 'Rip Game Pack'
+                        : formatCooldownShort(packCooldownMs)}
+                    </span>
+                  </button>
+                )}
                 <button
                   onClick={() => openBoxScore(selectedGamePk, { silent: true })}
                   disabled={refreshingBoxScore || loadingBoxScore}
