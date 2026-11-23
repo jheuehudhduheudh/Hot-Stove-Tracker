@@ -167,24 +167,23 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #5c0c16 0%, #1d0509 55%, #070405 100%)',
     headlineColor: '#fca5a5',
     notchBorder: '#ef4444',
-    heroNotchBg: '#26070d',
     heroNotchBg: '#1b0509',
     particles: 56,
     sparkColors: ['#ef4444', '#ffffff', '#fca5a5', '#f59e0b'],
   },
   SCRIPT_10: {
-    ribbonLabel: 'SCRIPT',
-    ribbonBg: 'linear-gradient(135deg, #fde68a 0%, #d97706 100%)',
-    ribbonText: '#1c1204',
-    spinBg: '#f59e0b',
-    spinGlow: 'rgba(245, 158, 11, 0.95)',
-    spinLabel: 'GOLD INK SCRIPT /10',
-    backdrop: 'radial-gradient(circle at 50% 35%, #5e3809 0%, #241404 55%, #090603 100%)',
-    headlineColor: '#fde68a',
-    notchBorder: '#fbbf24',
-    heroNotchBg: '#231404',
+    ribbonLabel: 'SAPPHIRE',
+    ribbonBg: 'linear-gradient(135deg, #7dd3fc 0%, #2563eb 100%)',
+    ribbonText: '#ffffff',
+    spinBg: '#2563eb',
+    spinGlow: 'rgba(56, 189, 248, 0.95)',
+    spinLabel: 'SAPPHIRE /10',
+    backdrop: 'radial-gradient(circle at 50% 35%, #0c366b 0%, #071936 55%, #030914 100%)',
+    headlineColor: '#bae6fd',
+    notchBorder: '#38bdf8',
+    heroNotchBg: '#071936',
     particles: 48,
-    sparkColors: ['#fbbf24', '#fef08a', '#ffffff', '#f59e0b'],
+    sparkColors: ['#38bdf8', '#bae6fd', '#ffffff', '#3b82f6'],
   },
   GOLD_25: {
     ribbonLabel: 'GOLD',
@@ -210,6 +209,7 @@ const TICKET_THEME = {
     backdrop: 'radial-gradient(circle at 50% 35%, #63111d 0%, #26070d 55%, #0b0406 100%)',
     headlineColor: '#fecaca',
     notchBorder: '#ef4444',
+    heroNotchBg: '#26070d',
     particles: 34,
     sparkColors: ['#ef4444', '#f87171', '#ffffff', '#fca5a5'],
   },
@@ -250,7 +250,7 @@ const ROULETTE_CYCLE_COLORS = [
   { bg: '#8b5cf6', glow: 'rgba(167,139,250,0.9)', label: 'HOLO FOIL' },
   { bg: '#e11d48', glow: 'rgba(239,68,68,0.92)', label: 'CRIMSON /99' },
   { bg: '#eab308', glow: 'rgba(250,204,21,0.95)', label: 'GOLD /25' },
-  { bg: '#f59e0b', glow: 'rgba(245,158,11,0.95)', label: 'SCRIPT /10' },
+  { bg: '#2563eb', glow: 'rgba(56,189,248,0.95)', label: 'SAPPHIRE /10' },
   { bg: '#dc2626', glow: 'rgba(239,68,68,1)', label: 'OBSIDIAN 1/1' },
 ];
 
@@ -341,7 +341,6 @@ function TicketCollectorCard({
   const { first, last } = splitPlayerName(card.fullName);
   const { line1, line2 } = formatHeadlineLines(card.statLine);
   const isHero = size === 'hero';
-  const hasScript = card.rarityId === 'SCRIPT_10' || card.rarityId === 'OBSIDIAN_1';
 
   const serialText = card.serialCap
     ? `${card.serialNumber || 1} / ${card.serialCap}`
@@ -480,16 +479,6 @@ function TicketCollectorCard({
 
         {/* CENTER BEVELED COLLECTOR WINDOW */}
         <div className={`relative z-20 flex-1 flex flex-col min-h-0 ${isHero ? 'px-3.5 py-2.5' : 'px-2 py-1.5'}`}>
-          {/* Small Brand Mark tucked cleanly into top-right corner */}
-          <div
-            className={`pointer-events-none absolute z-30 font-display font-black italic tracking-tighter drop-shadow ${
-              isHero ? 'top-4 right-5 text-xs' : 'top-2.5 right-3 text-[7px]'
-            }`}
-            style={{ color: theme.headlineColor }}
-          >
-            HST!
-          </div>
-
           <div
             onClick={() => onOpenPlayer && onOpenPlayer(card.playerId, card.fullName, card.teamAbbr)}
             className="hst-inner-window relative flex-1 rounded-xl overflow-hidden border border-white/25 flex flex-col justify-between cursor-pointer group"
@@ -566,16 +555,6 @@ function TicketCollectorCard({
                 </div>
               )}
 
-              {/* Script Signature Sweep for /10 Gold Ink Script & 1/1 Obsidian */}
-              {hasScript && (
-                <div
-                  className={`pointer-events-none absolute inset-x-2 bottom-1 text-center font-serif italic font-bold -rotate-6 drop-shadow-[0_3px_8px_rgba(0,0,0,0.95)] truncate z-30 ${
-                    card.rarityId === 'OBSIDIAN_1' ? 'text-red-400' : 'text-amber-300'
-                  } ${isHero ? 'text-2xl' : 'text-xs'}`}
-                >
-                  {card.fullName}
-                </div>
-              )}
             </div>
 
             {/* Bottom Frosted Achievement / Stat Plaque (Just like "150 CAREER INNINGS") */}
@@ -1020,7 +999,7 @@ export default function PackHub({
                 {CURRENT_SERIES}
               </span>
               <span className="px-1.5 py-0.5 rounded font-stat text-[9px] font-bold uppercase bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400">
-                v3.4
+                v3.5
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1107,7 +1086,7 @@ export default function PackHub({
                 { id: 'HOLO', label: 'Holo' },
                 { id: 'CRIMSON_99', label: '/99' },
                 { id: 'GOLD_25', label: '/25' },
-                { id: 'SCRIPT_10', label: '/10 Script' },
+                { id: 'SCRIPT_10', label: '/10 Sapphire' },
                 { id: 'OBSIDIAN_1', label: '1/1' },
               ].map((opt) => (
                 <button
