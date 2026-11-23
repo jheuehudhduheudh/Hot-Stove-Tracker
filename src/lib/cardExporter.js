@@ -762,7 +762,7 @@ export async function exportPulledCardPng(card, teamInfo) {
   // Load Transparent Cutout (fallback to spot headshot)
   let img = await loadCorsImage(
     card.playerId
-      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_426,q_auto:best/v1/people/${card.playerId}/headshot/67/current`
+      ? `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:silo:current.png/w_640,q_auto:best/v1/people/${card.playerId}/headshot/silo/current.png`
       : null
   );
   if (!img && card.playerId) {
