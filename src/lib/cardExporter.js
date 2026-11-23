@@ -774,10 +774,12 @@ export async function exportPulledCardPng(card, teamInfo) {
 
   if (img) {
     try {
-      const targetH = 380;
-      const ratio = targetH / img.height;
-      const dw = img.width * ratio;
-      ctx.drawImage(img, ix + (iw - dw) / 2, plaqueY - targetH + 22, dw, targetH);
+      const availH = plaqueY - (iy + 64);
+      const maxW = iw * 0.9;
+      const scale = Math.min(availH / img.height, maxW / img.width);
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      ctx.drawImage(img, ix + (iw - dw) / 2, plaqueY - dh + 4, dw, dh);
     } catch {
       // ignore
     }

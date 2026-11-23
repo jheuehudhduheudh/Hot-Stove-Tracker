@@ -161,9 +161,15 @@ export function formatCooldownShort(ms) {
   return `${secs}s`;
 }
 
+function extractPosFromHeadline(headline) {
+  const m = String(headline || '').match(/\b(RHP|LHP|SP|RP|C|1B|2B|3B|SS|LF|CF|RF|OF|DH|INF|UTL)\b/);
+  return m ? m[1] : 'MLB';
+}
+
 export function buildHotStovePool(freeAgents = [], transactions = []) {
   const byId = new Map();
 
+  // 1. Prioritize Free Agents (they have real positions & season stat lines!)
   for (const fa of freeAgents || []) {
     if (!fa?.playerId || !fa?.fullName) continue;
     byId.set(String(fa.playerId), {
@@ -171,26 +177,40 @@ export function buildHotStovePool(freeAgents = [], transactions = []) {
       fullName: fa.fullName,
       teamAbbr: fa.isSigned && fa.signedTeam ? fa.signedTeam : fa.lastTeam || 'MLB',
       position: fa.position || 'MLB',
-      statLine: fa.statLine || (fa.isSigned ? `Signed with ${fa.signedTeam}` : '2026-27 Free Agent'),
+      statLine: fa.statLine || (fa.isSigned ? `Signed • ${fa.signedTeam}` : '2026-27 Free Agent'),
       sourceTag: fa.isSigned ? `Signed • ${fa.signedTeam}` : '2026-27 Free Agent',
     });
   }
 
+  // 2. Add Major League Signings, Trades, and Extensions from the official wire (skip noisy DFAs/waivers!)
   for (const tx of transactions || []) {
     if (!tx?.player_id || !tx?.player_name) continue;
+    if (tx.is_major_league === false) continue;
+    const mt = String(tx.move_type || '').toUpperCase();
+    const isHighlightMove = ['SIGNING', 'TRADE', 'EXTENSION'].includes(mt) || (tx.total_value_millions > 0);
+    if (!isHighlightMove) continue;
+
     const key = String(tx.player_id);
     if (!byId.has(key)) {
       const teamAbbr = tx.to_team || tx.from_team || 'MLB';
       const dateStamp = tx.official_date || (tx.reported_at ? String(tx.reported_at).slice(0, 10) : '');
+      const pos = extractPosFromHeadline(tx.headline);
+      const niceLabel =
+        tx.total_value_millions > 0
+          ? `$${tx.total_value_millions}M Deal • ${teamAbbr}`
+          : mt === 'TRADE'
+          ? `Traded to ${teamAbbr} • Official`
+          : mt === 'EXTENSION'
+          ? `Contract Extension • ${teamAbbr}`
+          : `Signed Free Agent • ${teamAbbr}`;
+
       byId.set(key, {
         playerId: tx.player_id,
         fullName: tx.player_name,
         teamAbbr,
-        position: 'MLB',
-        statLine: tx.total_value_millions > 0
-          ? `$${tx.total_value_millions}M Deal • ${teamAbbr}`
-          : `${(tx.move_type || 'MOVE').replace('_', ' ')} • ${dateStamp || 'Official'}`,
-        sourceTag: dateStamp ? `Wire • ${dateStamp}` : 'Official MLB Wire',
+        position: pos,
+        statLine: niceLabel,
+        sourceTag: dateStamp ? `Official • ${dateStamp}` : 'Official MLB Wire',
       });
     }
   }
