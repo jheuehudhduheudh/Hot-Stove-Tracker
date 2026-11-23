@@ -548,3 +548,349 @@ export async function exportCompareCardPng({
   drawFooter(ctx, W, H, `${verdict} • Head-to-Head Comparison`);
   downloadCanvas(canvas, `${slugify(playerA.fullName)}-vs-${slugify(playerB.fullName)}.png`);
 }
+
+
+const RARITY_CANVAS_STYLES = {
+  OBSIDIAN_1: {
+    label: '1/1 OBSIDIAN EDITION',
+    border: '#ef4444',
+    topBg: '#1c0a0d',
+    bottomBg: '#09090b',
+    badgeBg: '#dc2626',
+    badgeText: '#ffffff',
+    accent: '#f87171',
+    hasScript: true,
+    hasSheen: true,
+  },
+  SCRIPT_10: {
+    label: 'GOLD INK SCRIPT',
+    border: '#f59e0b',
+    topBg: '#271a06',
+    bottomBg: '#0b0a09',
+    badgeBg: '#d97706',
+    badgeText: '#09090b',
+    accent: '#fbbf24',
+    hasScript: true,
+    hasSheen: true,
+  },
+  GOLD_25: {
+    label: 'GOLD FOIL',
+    border: '#eab308',
+    topBg: '#241d07',
+    bottomBg: '#0a0a0b',
+    badgeBg: '#eab308',
+    badgeText: '#09090b',
+    accent: '#fde047',
+    hasScript: false,
+    hasSheen: true,
+  },
+  CRIMSON_99: {
+    label: 'CRIMSON CHROME',
+    border: '#dc2626',
+    topBg: '#260a0d',
+    bottomBg: '#0a0a0b',
+    badgeBg: '#dc2626',
+    badgeText: '#ffffff',
+    accent: '#f87171',
+    hasScript: false,
+    hasSheen: true,
+  },
+  HOLO: {
+    label: 'HOLO FOIL',
+    border: '#a78bfa',
+    topBg: '#1b132b',
+    bottomBg: '#0a0a0d',
+    badgeBg: '#7c3aed',
+    badgeText: '#ffffff',
+    accent: '#c4b5fd',
+    hasScript: false,
+    hasSheen: true,
+  },
+  BASE: {
+    label: 'BASE SERIES',
+    border: '#3f3f46',
+    topBg: '#18181b',
+    bottomBg: '#0a0a0b',
+    badgeBg: '#27272a',
+    badgeText: '#e4e4e7',
+    accent: '#a1a1aa',
+    hasScript: false,
+    hasSheen: false,
+  },
+};
+
+export async function exportPulledCardPng(card, teamInfo) {
+  if (!card) return;
+  const W = 750;
+  const H = 1050;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const style = RARITY_CANVAS_STYLES[card.rarityId] || RARITY_CANVAS_STYLES.BASE;
+  const teamColor = teamInfo?.color || '#27272a';
+
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, style.topBg);
+  bg.addColorStop(0.55, '#101013');
+  bg.addColorStop(1, style.bottomBg);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const rad = ctx.createRadialGradient(W / 2, 370, 40, W / 2, 370, 340);
+  rad.addColorStop(0, `${teamColor}66`);
+  rad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = rad;
+  ctx.fillRect(0, 0, W, H);
+
+  if (style.hasSheen) {
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    const sheen = ctx.createLinearGradient(0, 0, W, H);
+    if (card.rarityId === 'HOLO') {
+      sheen.addColorStop(0, '#38bdf8');
+      sheen.addColorStop(0.35, '#a78bfa');
+      sheen.addColorStop(0.7, '#f472b6');
+      sheen.addColorStop(1, '#34d399');
+    } else {
+      sheen.addColorStop(0, '#ffffff');
+      sheen.addColorStop(0.5, style.border);
+      sheen.addColorStop(1, '#ffffff');
+    }
+    ctx.fillStyle = sheen;
+    ctx.beginPath();
+    ctx.moveTo(0, 120);
+    ctx.lineTo(W, 380);
+    ctx.lineTo(W, 560);
+    ctx.lineTo(0, 300);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  roundRectPath(ctx, 22, 22, W - 44, H - 44, 28);
+  ctx.strokeStyle = style.border;
+  ctx.lineWidth = card.rarityId === 'OBSIDIAN_1' ? 6 : 4;
+  ctx.stroke();
+
+  roundRectPath(ctx, 36, 36, W - 72, H - 72, 20);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = style.accent;
+  ctx.font = '800 15px "JetBrains Mono", monospace';
+  ctx.fillText(String(card.series || '2026-27 HOT STOVE').toUpperCase(), 60, 78);
+
+  const serialLabel = card.serialCap
+    ? `#${String(card.serialNumber || 1).padStart(card.serialCap >= 100 ? 3 : 2, '0')} / ${card.serialCap}`
+    : style.label;
+
+  ctx.font = '800 16px "JetBrains Mono", monospace';
+  const badgeW = Math.max(150, ctx.measureText(serialLabel).width + 32);
+  roundRectPath(ctx, W - 60 - badgeW, 58, badgeW, 38, 8);
+  ctx.fillStyle = style.badgeBg;
+  ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = style.badgeText;
+  ctx.fillText(serialLabel, W - 60 - badgeW / 2, 78);
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.font = '900 220px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(teamInfo?.abbr || card.teamAbbr || 'MLB', W / 2, 360);
+  ctx.restore();
+
+  const headshotUrl = card.playerId
+    ? `https://midfield.mlbstatic.com/v1/people/${card.playerId}/spots/213`
+    : null;
+  const img = await loadCorsImage(headshotUrl);
+  const initials = (card.fullName || 'ML')
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  drawAvatarMedallion(ctx, img, (W - 310) / 2, 175, 310, teamColor, initials, null);
+
+  if (style.hasScript) {
+    ctx.save();
+    ctx.translate(W / 2, 515);
+    ctx.rotate(-0.07);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = card.rarityId === 'OBSIDIAN_1' ? '#f87171' : '#fbbf24';
+    ctx.font = 'italic 700 44px Georgia, "Times New Roman", serif';
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = 10;
+    ctx.fillText(card.fullName || '', 0, 0);
+    ctx.restore();
+  }
+
+  const plateY = 580;
+  roundRectPath(ctx, 56, plateY, W - 112, 330, 18);
+  ctx.fillStyle = 'rgba(17, 17, 19, 0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  roundRectPath(ctx, 56, plateY, W - 112, 8, 4);
+  ctx.fillStyle = teamColor;
+  ctx.fill();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = style.accent;
+  ctx.font = '800 14px "JetBrains Mono", monospace';
+  ctx.fillText(
+    `${teamInfo?.name || card.teamAbbr || 'MLB'}  •  ${card.position || 'MLB'}  •  ${style.label}`.toUpperCase(),
+    W / 2,
+    plateY + 46
+  );
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 44px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText(fitText(ctx, card.fullName, W - 150), W / 2, plateY + 104);
+
+  roundRectPath(ctx, 84, plateY + 142, W - 168, 76, 12);
+  ctx.fillStyle = '#0a0a0b';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+  ctx.stroke();
+
+  ctx.fillStyle = '#f4f4f5';
+  ctx.font = '700 22px "JetBrains Mono", monospace';
+  ctx.fillText(fitText(ctx, card.statLine || 'Official MLB Pull', W - 200), W / 2, plateY + 182);
+
+  ctx.fillStyle = '#a1a1aa';
+  ctx.font = '700 14px "JetBrains Mono", monospace';
+  const stampText = card.gameMatchup
+    ? `GAME CHECK-IN • ${card.gameMatchup} • ${card.sourceTag || ''}`
+    : `${card.packMode === 'GAME_CHECKIN' ? 'GAME CHECK-IN' : 'HOT STOVE WIRE'} • ${card.sourceTag || ''}`;
+  ctx.fillText(fitText(ctx, stampText.toUpperCase(), W - 160), W / 2, plateY + 266);
+
+  ctx.fillStyle = '#71717a';
+  ctx.font = '700 13px "JetBrains Mono", monospace';
+  ctx.fillText('HOT STOVE TRACKER  •  hot-stove-tracker.vercel.app', W / 2, H - 62);
+
+  downloadCanvas(canvas, `${slugify(card.fullName)}-${slugify(card.rarityId)}.png`);
+}
+
+export async function exportShowcasePng(handle, pinnedCards, getTeamInfoFn) {
+  const W = 1200;
+  const H = 675;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#0a0a0b';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(44, 34, 5, 34);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 30px "Plus Jakarta Sans", Inter, sans-serif';
+  ctx.fillText(`@${handle || 'collector'} — Pinned Showcase`, 62, 60);
+
+  ctx.fillStyle = '#a1a1aa';
+  ctx.font = '600 13px "JetBrains Mono", monospace';
+  ctx.fillText(`2026-27 HOT STOVE SERIES  •  ${pinnedCards.length} / 6 PINNED PULLS`, 62, 82);
+
+  const slots = pinnedCards.slice(0, 6);
+  const imgs = await Promise.all(
+    slots.map((c) =>
+      loadCorsImage(c.playerId ? `https://midfield.mlbstatic.com/v1/people/${c.playerId}/spots/120` : null)
+    )
+  );
+
+  const cols = 3;
+  const gapX = 18;
+  const gapY = 18;
+  const cardW = (W - 88 - gapX * 2) / cols;
+  const cardH = 236;
+  const startY = 108;
+
+  for (let i = 0; i < 6; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = 44 + col * (cardW + gapX);
+    const y = startY + row * (cardH + gapY);
+    const card = slots[i];
+
+    if (!card) {
+      roundRectPath(ctx, x, y, cardW, cardH, 14);
+      ctx.fillStyle = '#111113';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.setLineDash([6, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#52525b';
+      ctx.font = '700 13px "JetBrains Mono", monospace';
+      ctx.fillText(`EMPTY SLOT #${i + 1}`, x + cardW / 2, y + cardH / 2);
+      continue;
+    }
+
+    const st = RARITY_CANVAS_STYLES[card.rarityId] || RARITY_CANVAS_STYLES.BASE;
+    const team = getTeamInfoFn ? getTeamInfoFn(card.teamAbbr) : { color: '#27272a', abbr: card.teamAbbr };
+
+    const cGrad = ctx.createLinearGradient(x, y, x + cardW, y + cardH);
+    cGrad.addColorStop(0, st.topBg);
+    cGrad.addColorStop(1, '#111113');
+    roundRectPath(ctx, x, y, cardW, cardH, 14);
+    ctx.fillStyle = cGrad;
+    ctx.fill();
+    ctx.strokeStyle = st.border;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    const init = (card.fullName || 'ML').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    drawAvatarMedallion(ctx, imgs[i], x + 18, y + 20, 74, team.color, init, null);
+
+    const badge = card.serialCap
+      ? `#${String(card.serialNumber || 1).padStart(2, '0')}/${card.serialCap}`
+      : st.label.split(' ')[0];
+    ctx.font = '800 11px "JetBrains Mono", monospace';
+    const bw = Math.max(66, ctx.measureText(badge).width + 18);
+    roundRectPath(ctx, x + cardW - 16 - bw, y + 18, bw, 24, 6);
+    ctx.fillStyle = st.badgeBg;
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = st.badgeText;
+    ctx.fillText(badge, x + cardW - 16 - bw / 2, y + 30);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = st.accent;
+    ctx.font = '700 11px "JetBrains Mono", monospace';
+    ctx.fillText(`${card.teamAbbr || 'MLB'} • ${card.position || 'MLB'}`, x + 106, y + 66);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 20px "Plus Jakarta Sans", Inter, sans-serif';
+    ctx.fillText(fitText(ctx, card.fullName, cardW - 122), x + 106, y + 92);
+
+    roundRectPath(ctx, x + 18, y + 118, cardW - 36, 56, 8);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fill();
+    ctx.fillStyle = '#e4e4e7';
+    ctx.font = '700 13px "JetBrains Mono", monospace';
+    ctx.fillText(fitText(ctx, card.statLine || 'Official Pull', cardW - 60), x + 30, y + 150);
+
+    ctx.fillStyle = '#a1a1aa';
+    ctx.font = '600 11px "JetBrains Mono", monospace';
+    ctx.fillText(fitText(ctx, card.sourceTag || card.series, cardW - 36), x + 18, y + 206);
+  }
+
+  drawFooter(ctx, W, H, `@${handle || 'collector'} • Collector Showcase`);
+  downloadCanvas(canvas, `${slugify(handle || 'collector')}-showcase.png`);
+}
