@@ -1036,6 +1036,7 @@ export default function App() {
       packTitle: `${boxScore.away?.abbr || 'AWY'} @ ${boxScore.home?.abbr || 'HME'} GAME PACK`,
       packSubtitle: `${pool.length} players from this box score`,
       packTheme: 'crimson',
+      gamePk: selectedGamePk,
     });
     setSelectedGamePk(null);
     setSelectedPlayer(null);
