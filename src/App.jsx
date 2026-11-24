@@ -1115,33 +1115,20 @@ export default function App() {
     }
   });
 
-  const [savedMyTeams, setSavedMyTeams] = useState(() => {
+  const readStoredMyTeams = () => {
     try {
       const saved = localStorage.getItem('hst_my_teams');
       const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      if (!Array.isArray(parsed)) return [];
+      return Array.from(new Set(parsed.map((t) => resolveActiveTeamAbbr(t)).filter(Boolean)));
     } catch {
       return [];
     }
-  });
-  const [selectedTeams, setSelectedTeams] = useState(() => {
-    try {
-      const saved = localStorage.getItem('hst_my_teams');
-      const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const [myTeamsOnlyActive, setMyTeamsOnlyActive] = useState(() => {
-    try {
-      const saved = localStorage.getItem('hst_my_teams');
-      const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) && parsed.length > 0;
-    } catch {
-      return false;
-    }
-  });
+  };
+
+  const [savedMyTeams, setSavedMyTeams] = useState(readStoredMyTeams);
+  const [selectedTeams, setSelectedTeams] = useState(readStoredMyTeams);
+  const [myTeamsOnlyActive, setMyTeamsOnlyActive] = useState(() => readStoredMyTeams().length > 0);
 
   const [majorLeagueOnly, setMajorLeagueOnly] = useState(true);
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -1155,6 +1142,14 @@ export default function App() {
 
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const teamMenuRef = useRef(null);
+  const boxScoreReqIdRef = useRef(0);
+  const scoresReqIdRef = useRef(0);
+  const standingsReqIdRef = useRef(0);
+  const leadersReqIdRef = useRef(0);
+  const faReqIdRef = useRef(0);
+  const compareReqIdRef = useRef([0, 0]);
+  const comparePlayersRef = useRef([null, null]);
 
   // Full Player Profile sub-tab / group / Savant & Splits year state
   const [profileSubTab, setProfileSubTab] = useState('overview');
@@ -1168,6 +1163,9 @@ export default function App() {
   // Side-by-Side Player Comparison state
   const [compareOpen, setCompareOpen] = useState(false);
   const [comparePlayers, setComparePlayers] = useState([null, null]); // [playerA, playerB]
+  useEffect(() => {
+    comparePlayersRef.current = comparePlayers;
+  }, [comparePlayers]);
   const [loadingCompareSlot, setLoadingCompareSlot] = useState([false, false]);
   const [compareScope, setCompareScope] = useState('career'); // 'career' | 'latest' | 'season'
   const [compareSeasonYear, setCompareSeasonYear] = useState('2026');
@@ -1199,12 +1197,13 @@ export default function App() {
   const skipUrlSyncRef = useRef(false);
 
   const openTeamHub = (abbr) => {
-    if (!abbr || abbr === 'MLB') return;
+    const activeAbbr = resolveActiveTeamAbbr(abbr);
+    if (!activeAbbr) return;
     setSelectedPlayer(null);
     setCompareOpen(false);
     setProfileOpen(false);
     setSelectedGamePk(null);
-    setHubTeam(abbr);
+    setHubTeam(activeAbbr);
     setHubRosterSearch('');
     setActiveTab('teamHub');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1327,6 +1326,7 @@ export default function App() {
 
   const openBoxScore = async (gamePk, { silent = false, initialTab = null } = {}) => {
     if (!gamePk) return;
+    const reqId = ++boxScoreReqIdRef.current;
     if (!silent) {
       setSelectedGamePk(gamePk);
       setBoxScore(null);
@@ -1337,20 +1337,23 @@ export default function App() {
     }
     try {
       const res = await fetch(`/api/season?type=boxscore&gamePk=${gamePk}`);
-      if (res.ok) {
+      if (res.ok && boxScoreReqIdRef.current === reqId) {
         const data = await res.json();
         setBoxScore(data);
       }
     } catch {
-      if (!silent) setBoxScore(null);
+      if (!silent && boxScoreReqIdRef.current === reqId) setBoxScore(null);
     } finally {
-      setLoadingBoxScore(false);
-      setRefreshingBoxScore(false);
+      if (boxScoreReqIdRef.current === reqId) {
+        setLoadingBoxScore(false);
+        setRefreshingBoxScore(false);
+      }
     }
   };
 
-  const loadComparePlayer = async (slotIdx, playerId, savantYrOverride = null) => {
+  const loadComparePlayer = async (slotIdx, playerId, savantYrOverride = null, { skipUrlPush = false } = {}) => {
     if (!playerId) return;
+    const reqId = ++compareReqIdRef.current[slotIdx];
     setLoadingCompareSlot((prev) => {
       const next = [...prev];
       next[slotIdx] = true;
@@ -1359,39 +1362,41 @@ export default function App() {
     try {
       const yrParam = savantYrOverride ? `&savantYear=${encodeURIComponent(savantYrOverride)}` : '';
       const res = await fetch(`/api/player?id=${playerId}${yrParam}`);
-      if (res.ok) {
+      if (res.ok && compareReqIdRef.current[slotIdx] === reqId) {
         const data = await res.json();
+        if (skipUrlPush) skipUrlSyncRef.current = true;
+        const other = comparePlayersRef.current[slotIdx === 0 ? 1 : 0];
         setComparePlayers((prev) => {
           const next = [...prev];
           next[slotIdx] = data;
-          const other = next[slotIdx === 0 ? 1 : 0];
-          if (!other) {
-            setCompareStatGroup(data.isPitcher ? 'pitching' : 'hitting');
-          } else if (next[0]?.isPitcher && next[1]?.isPitcher) {
-            setCompareStatGroup('pitching');
-          } else if (!next[0]?.isPitcher && !next[1]?.isPitcher) {
-            setCompareStatGroup('hitting');
-          }
-          if (data?.savant?.year && !savantYrOverride) {
-            setCompareSavantYear(String(data.savant.year));
-          }
           return next;
         });
+        if (!other) {
+          setCompareStatGroup(data.isPitcher ? 'pitching' : 'hitting');
+        } else if (data.isPitcher && other.isPitcher) {
+          setCompareStatGroup('pitching');
+        } else if (!data.isPitcher && !other.isPitcher) {
+          setCompareStatGroup('hitting');
+        }
+        if (data?.savant?.year && !savantYrOverride) {
+          setCompareSavantYear(String(data.savant.year));
+        }
       }
     } catch {
       // Ignore fetch failure
     } finally {
-      setLoadingCompareSlot((prev) => {
-        const next = [...prev];
-        next[slotIdx] = false;
-        return next;
-      });
+      if (compareReqIdRef.current[slotIdx] === reqId) {
+        setLoadingCompareSlot((prev) => {
+          const next = [...prev];
+          next[slotIdx] = false;
+          return next;
+        });
+      }
     }
   };
 
   const openCompareView = (initialPlayerData = null) => {
     setSelectedPlayer(null);
-    setCompareOpen(false);
     setProfileOpen(false);
     setSelectedGamePk(null);
     setCompareOpen(true);
@@ -1465,12 +1470,13 @@ export default function App() {
   };
 
   const fetchFreeAgents = async (classParam = selectedFaClass, modeParam = faStatMode) => {
+    const reqId = ++faReqIdRef.current;
     setLoadingFreeAgents(true);
     try {
       const res = await fetch(
         `/api/free-agents?classYear=${encodeURIComponent(classParam)}&statMode=${encodeURIComponent(modeParam)}`
       );
-      if (res.ok) {
+      if (res.ok && faReqIdRef.current === reqId) {
         const data = await res.json();
         if (Array.isArray(data?.freeAgents)) {
           setFreeAgents(data.freeAgents);
@@ -1482,30 +1488,32 @@ export default function App() {
     } catch {
       // Leave empty
     } finally {
-      setLoadingFreeAgents(false);
+      if (faReqIdRef.current === reqId) setLoadingFreeAgents(false);
     }
   };
 
   const fetchScores = async (dateParam = scoreDate, silent = false) => {
+    const reqId = ++scoresReqIdRef.current;
     if (!silent) setLoadingScores(true);
     try {
       const res = await fetch(`/api/season?type=scores&date=${encodeURIComponent(dateParam)}`);
-      if (res.ok) {
+      if (res.ok && scoresReqIdRef.current === reqId) {
         const data = await res.json();
         setGames(Array.isArray(data?.games) ? data.games : []);
       }
     } catch {
-      if (!silent) setGames([]);
+      if (!silent && scoresReqIdRef.current === reqId) setGames([]);
     } finally {
-      if (!silent) setLoadingScores(false);
+      if (!silent && scoresReqIdRef.current === reqId) setLoadingScores(false);
     }
   };
 
   const fetchStandings = async (seasonParam = standingsSeason) => {
+    const reqId = ++standingsReqIdRef.current;
     setLoadingStandings(true);
     try {
       const res = await fetch(`/api/season?type=standings&season=${encodeURIComponent(seasonParam)}`);
-      if (res.ok) {
+      if (res.ok && standingsReqIdRef.current === reqId) {
         const data = await res.json();
         setStandingsData({
           divisions: Array.isArray(data?.divisions) ? data.divisions : [],
@@ -1513,17 +1521,18 @@ export default function App() {
         });
       }
     } catch {
-      setStandingsData({ divisions: [], wildCard: [] });
+      if (standingsReqIdRef.current === reqId) setStandingsData({ divisions: [], wildCard: [] });
     } finally {
-      setLoadingStandings(false);
+      if (standingsReqIdRef.current === reqId) setLoadingStandings(false);
     }
   };
 
   const fetchLeaders = async (seasonParam = leadersSeason) => {
+    const reqId = ++leadersReqIdRef.current;
     setLoadingLeaders(true);
     try {
       const res = await fetch(`/api/season?type=leaders&season=${encodeURIComponent(seasonParam)}`);
-      if (res.ok) {
+      if (res.ok && leadersReqIdRef.current === reqId) {
         const data = await res.json();
         setLeadersData({
           hitting: Array.isArray(data?.hitting) ? data.hitting : [],
@@ -1531,9 +1540,9 @@ export default function App() {
         });
       }
     } catch {
-      setLeadersData({ hitting: [], pitching: [] });
+      if (leadersReqIdRef.current === reqId) setLeadersData({ hitting: [], pitching: [] });
     } finally {
-      setLoadingLeaders(false);
+      if (leadersReqIdRef.current === reqId) setLoadingLeaders(false);
     }
   };
 
@@ -1555,8 +1564,8 @@ export default function App() {
       skipUrlSyncRef.current = true;
       setCompareOpen(true);
       const ids = cmp.split(',').filter((x) => /^\d+$/.test(x)).slice(0, 2);
-      if (ids[0]) loadComparePlayer(0, Number(ids[0]));
-      if (ids[1]) loadComparePlayer(1, Number(ids[1]));
+      if (ids[0]) loadComparePlayer(0, Number(ids[0]), null, { skipUrlPush: true });
+      if (ids[1]) loadComparePlayer(1, Number(ids[1]), null, { skipUrlPush: true });
     } else if (pid && /^\d+$/.test(pid)) {
       skipUrlSyncRef.current = true;
       openPlayerModal(Number(pid), 'MLB Player', params.get('team') || null);
@@ -1621,13 +1630,13 @@ export default function App() {
         setCompareOpen(true);
         setSelectedPlayer(null);
         const ids = cmp.split(',').filter((x) => /^\d+$/.test(x)).slice(0, 2);
-        if (ids[0]) loadComparePlayer(0, Number(ids[0]));
-        if (ids[1]) loadComparePlayer(1, Number(ids[1]));
+        if (ids[0]) loadComparePlayer(0, Number(ids[0]), null, { skipUrlPush: true });
+        if (ids[1]) loadComparePlayer(1, Number(ids[1]), null, { skipUrlPush: true });
       } else {
         setCompareOpen(false);
       }
       if (pid && /^\d+$/.test(pid)) {
-        openPlayerModal(Number(pid), 'MLB Player', tm || 'MLB');
+        openPlayerModal(Number(pid), 'MLB Player', tm || null);
       } else {
         setSelectedPlayer(null);
       }
@@ -1678,6 +1687,18 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer, compareOpen, comparePickSlot, profileOpen]);
+
+  // Close desktop Team Filter dropdown when clicking outside
+  useEffect(() => {
+    if (!teamMenuOpen) return;
+    const onDocMouseDown = (e) => {
+      if (teamMenuRef.current && !teamMenuRef.current.contains(e.target)) {
+        setTeamMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [teamMenuOpen]);
 
   // Track scroll position for floating Back-to-Top button
   useEffect(() => {
@@ -1987,33 +2008,62 @@ export default function App() {
     });
   }, [freeAgents, faPositionFilter, faSearch, watchlistOnly, watchlistIds, faSignedFilter]);
 
-  const toggleTeam = (abbr) => {
-    setMyTeamsOnlyActive(false);
-    setSelectedTeams((prev) =>
-      prev.includes(abbr) ? prev.filter((t) => t !== abbr) : [...prev, abbr]
+  const persistMyTeams = (nextTeams, { activateFilter = true, showNotice = false } = {}) => {
+    const clean = Array.from(
+      new Set((nextTeams || []).map((t) => resolveActiveTeamAbbr(t)).filter(Boolean))
     );
+    try { localStorage.setItem('hst_my_teams', JSON.stringify(clean)); } catch {}
+    setSavedMyTeams(clean);
+    if (activateFilter) {
+      setSelectedTeams(clean);
+      setMyTeamsOnlyActive(clean.length > 0);
+    } else if (clean.length === 0) {
+      setMyTeamsOnlyActive(false);
+    }
+    if (showNotice) {
+      setSyncNotice(
+        clean.length > 0
+          ? `Saved ${clean.join(', ')} as My Teams`
+          : 'Cleared saved My Teams'
+      );
+    }
+  };
+
+  const toggleTeam = (abbr) => {
+    const next = selectedTeams.includes(abbr)
+      ? selectedTeams.filter((t) => t !== abbr)
+      : [...selectedTeams, abbr];
+    setSelectedTeams(next);
+    if (myTeamsOnlyActive) {
+      persistMyTeams(next, { activateFilter: false, showNotice: false });
+    }
   };
 
   const selectDivision = (div) => {
-    setMyTeamsOnlyActive(false);
     const divAbbrs = MLB_TEAMS.filter((t) => t.division === div).map((t) => t.abbr);
     setSelectedTeams(divAbbrs);
+    if (myTeamsOnlyActive) {
+      persistMyTeams(divAbbrs, { activateFilter: false, showNotice: false });
+    }
   };
 
   const saveMyTeams = () => {
-    try { localStorage.setItem('hst_my_teams', JSON.stringify(selectedTeams)); } catch {}
-    setSavedMyTeams(selectedTeams);
-    setMyTeamsOnlyActive(selectedTeams.length > 0);
-    setSyncNotice(
-      selectedTeams.length > 0
-        ? `Saved ${selectedTeams.join(', ')} as My Teams preset`
-        : 'Cleared saved My Teams preset'
-    );
+    persistMyTeams(selectedTeams, { activateFilter: true, showNotice: true });
+    setTeamMenuOpen(false);
+    setMobileFilterOpen(false);
+  };
+
+  const openTeamPickerResponsive = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setMobileFilterOpen(true);
+    } else {
+      setTeamMenuOpen(true);
+    }
   };
 
   const toggleMyTeamsQuickFilter = () => {
     if (savedMyTeams.length === 0) {
-      setTeamMenuOpen(true);
+      openTeamPickerResponsive();
       return;
     }
     if (myTeamsOnlyActive) {
@@ -2130,7 +2180,7 @@ export default function App() {
                 {userProfile?.mode === 'authenticated' && userProfile?.username ? userProfile.username : 'Profile'}
               </span>
               {pinnedPlayers.length > 0 && (
-                <span className="font-stat text-[10px] font-extrabold px-1.5 py-0.2 rounded-full bg-red-500/15 text-red-600 dark:text-red-400">
+                <span className="font-stat text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400">
                   {pinnedPlayers.length}
                 </span>
               )}
@@ -2207,11 +2257,11 @@ export default function App() {
                         >
                           <TeamLogo abbr={aw.abbr} size="xs" className="!w-3.5 !h-3.5" />
                           <span className="font-bold">{aw.abbr}</span>
-                          <span className="text-slate-500">{g.away?.runs ?? ''}</span>
+                          <span className="text-slate-500">{g.away?.score ?? ''}</span>
                           <span className="text-slate-400">@</span>
                           <TeamLogo abbr={hm.abbr} size="xs" className="!w-3.5 !h-3.5" />
                           <span className="font-bold">{hm.abbr}</span>
-                          <span className="text-slate-500">{g.home?.runs ?? ''}</span>
+                          <span className="text-slate-500">{g.home?.score ?? ''}</span>
                           <span className="text-[9px] text-slate-400 uppercase">{g.status}</span>
                         </button>
                       );
@@ -2269,6 +2319,7 @@ export default function App() {
             profile={userProfile}
             pinnedPlayers={pinnedPlayers}
             savedMyTeams={savedMyTeams}
+            onUpdateMyTeams={(next) => persistMyTeams(next, { activateFilter: myTeamsOnlyActive, showNotice: false })}
             onUnpinPlayer={togglePinnedPlayer}
             onClearAllPins={clearAllPinnedPlayers}
             onOpenPlayer={openPlayerModal}
@@ -2287,6 +2338,19 @@ export default function App() {
           const isPitchCmp = compareStatGroup === 'pitching';
           const grpKey = isPitchCmp ? 'pitching' : 'hitting';
 
+          const sharedYearsSet = new Set();
+          [pA, pB].forEach((pl) => {
+            (pl?.[grpKey]?.seasons || []).forEach((s) => sharedYearsSet.add(String(s.season)));
+          });
+          const compareYearOptions = Array.from(sharedYearsSet).sort((a, b) => Number(b) - Number(a));
+          const savantYearOptions = Array.from(sharedYearsSet)
+            .filter((y) => Number(y) >= 2015)
+            .sort((a, b) => Number(b) - Number(a));
+          const effectiveCompareSeasonYear =
+            compareYearOptions.includes(String(compareSeasonYear))
+              ? String(compareSeasonYear)
+              : compareYearOptions[0] || String(compareSeasonYear);
+
           const getPlayerStatForScope = (player) => {
             if (!player) return { stat: null, label: '' };
             const blk = player[grpKey] || { seasons: [], career: null };
@@ -2297,21 +2361,12 @@ export default function App() {
               const row = blk.seasons?.[0] || null;
               return { stat: row?.stat || null, label: row ? `${row.season} (${row.team})` : 'N/A' };
             }
-            const match = (blk.seasons || []).find((s) => String(s.season) === String(compareSeasonYear));
-            return { stat: match?.stat || null, label: match ? `${match.season} (${match.team})` : `${compareSeasonYear} (N/A)` };
+            const match = (blk.seasons || []).find((s) => String(s.season) === effectiveCompareSeasonYear);
+            return { stat: match?.stat || null, label: match ? `${match.season} (${match.team})` : `${effectiveCompareSeasonYear} (N/A)` };
           };
 
           const statAObj = getPlayerStatForScope(pA);
           const statBObj = getPlayerStatForScope(pB);
-
-          const sharedYearsSet = new Set();
-          [pA, pB].forEach((pl) => {
-            (pl?.[grpKey]?.seasons || []).forEach((s) => sharedYearsSet.add(String(s.season)));
-          });
-          const compareYearOptions = Array.from(sharedYearsSet).sort((a, b) => Number(b) - Number(a));
-          const savantYearOptions = Array.from(sharedYearsSet)
-            .filter((y) => Number(y) >= 2015)
-            .sort((a, b) => Number(b) - Number(a));
 
           const metrics = isPitchCmp
             ? [
@@ -2687,7 +2742,7 @@ export default function App() {
 
                       {compareScope === 'season' && compareYearOptions.length > 0 && (
                         <YearPicker
-                          value={compareSeasonYear}
+                          value={effectiveCompareSeasonYear}
                           onChange={setCompareSeasonYear}
                           years={compareYearOptions}
                           quickYears={compareYearOptions.slice(0, 3)}
@@ -3667,10 +3722,15 @@ export default function App() {
                     </span>
                   </button>
 
-                  <div className="relative hidden md:block">
+                  <div ref={teamMenuRef} className="relative hidden md:block">
                     <button
+                      type="button"
                       onClick={() => setTeamMenuOpen(!teamMenuOpen)}
-                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500"
+                      className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold border bg-slate-50 dark:bg-slate-950 transition ${
+                        teamMenuOpen
+                          ? 'border-sky-500 ring-2 ring-sky-500/20'
+                          : 'border-slate-200 dark:border-slate-800 hover:border-sky-500'
+                      }`}
                     >
                       <Filter className="w-4 h-4 text-sky-500" />
                       <span>
@@ -3681,33 +3741,32 @@ export default function App() {
                     </button>
 
                     {teamMenuOpen && (
-                      <div className="absolute right-0 mt-2 w-[420px] p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl z-40">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                            Division Presets
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={saveMyTeams}
-                              className="text-xs font-semibold text-sky-500 hover:underline"
-                            >
-                              Save as My Teams
-                            </button>
-                            <button
-                              onClick={() => {
-                                setSelectedTeams([]);
-                                setMyTeamsOnlyActive(false);
-                              }}
-                              className="text-xs text-slate-400 hover:text-slate-200"
-                            >
-                              Clear
-                            </button>
+                      <div className="absolute right-0 mt-2 w-[430px] p-4 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-40 animate-pop-in space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                              {myTeamsOnlyActive ? 'Editing My Teams (Auto-Saving)' : 'Filter Teams & Division Presets'}
+                            </span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTeams([]);
+                              if (myTeamsOnlyActive) {
+                                persistMyTeams([], { activateFilter: false, showNotice: false });
+                              }
+                            }}
+                            className="text-xs font-semibold text-slate-400 hover:text-rose-400 transition"
+                          >
+                            Clear Filter
+                          </button>
                         </div>
-                        <div className="flex flex-wrap gap-1.5 mb-3">
+
+                        <div className="flex flex-wrap gap-1.5">
                           {DIVISIONS.map((div) => (
                             <button
                               key={div}
+                              type="button"
                               onClick={() => selectDivision(div)}
                               className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-sky-500 hover:text-white transition"
                             >
@@ -3715,23 +3774,57 @@ export default function App() {
                             </button>
                           ))}
                         </div>
-                        <div className="grid grid-cols-5 gap-1.5 max-h-52 overflow-y-auto">
+
+                        <div className="grid grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-0.5">
                           {MLB_TEAMS.map((t) => {
                             const active = selectedTeams.includes(t.abbr);
+                            const isSaved = savedMyTeams.includes(t.abbr);
                             return (
                               <button
                                 key={t.abbr}
+                                type="button"
                                 onClick={() => toggleTeam(t.abbr)}
-                                className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
+                                title={isSaved ? `${t.name} (in My Teams)` : t.name}
+                                className={`relative px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
                                   active
                                     ? 'bg-sky-600 text-white border-sky-600'
                                     : 'border-slate-200 dark:border-slate-800 hover:border-slate-400'
                                 }`}
                               >
                                 {t.abbr}
+                                {isSaved && (
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400"
+                                  />
+                                )}
                               </button>
                             );
                           })}
+                        </div>
+
+                        <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={saveMyTeams}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition"
+                          >
+                            <Star className="w-3.5 h-3.5 fill-current" />
+                            <span>
+                              {selectedTeams.length > 0
+                                ? `Save as My Teams (${selectedTeams.length})`
+                                : savedMyTeams.length > 0
+                                ? 'Clear Saved My Teams'
+                                : 'Save as My Teams'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTeamMenuOpen(false)}
+                            className="px-3 py-2 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400 transition"
+                          >
+                            Done
+                          </button>
                         </div>
                       </div>
                     )}
@@ -5976,7 +6069,7 @@ export default function App() {
                                   <span>{rp.position || 'MLB'}</span>
                                   {rpTeam && (
                                     <span
-                                      className="px-1.5 py-0.2 rounded text-[10px] font-black shadow-sm"
+                                      className="px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm"
                                       style={getTeamBadgeStyle(rpTeam.color)}
                                     >
                                       {rpTeam.abbr}
@@ -6715,11 +6808,19 @@ export default function App() {
       )}
 
       {mobileFilterOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end md:hidden">
-          <div className="w-full rounded-t-3xl bg-white dark:bg-slate-900 p-5 max-h-[85vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-end md:hidden"
+          onClick={() => setMobileFilterOpen(false)}
+        >
+          <div
+            className="w-full rounded-t-3xl bg-white dark:bg-slate-900 p-5 max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-extrabold text-base">Filter Teams &amp; Divisions</h3>
-              <button onClick={() => setMobileFilterOpen(false)} className="p-1">
+              <h3 className="font-extrabold text-base">
+                {myTeamsOnlyActive ? 'Edit My Teams' : 'Filter Teams & Divisions'}
+              </h3>
+              <button type="button" onClick={() => setMobileFilterOpen(false)} className="p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -6727,6 +6828,7 @@ export default function App() {
               {DIVISIONS.map((div) => (
                 <button
                   key={div}
+                  type="button"
                   onClick={() => selectDivision(div)}
                   className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800"
                 >
@@ -6735,28 +6837,44 @@ export default function App() {
               ))}
             </div>
             <div className="grid grid-cols-5 gap-1.5 mb-4">
-              {MLB_TEAMS.map((t) => (
-                <button
-                  key={t.abbr}
-                  onClick={() => toggleTeam(t.abbr)}
-                  className={`py-2 rounded-lg text-xs font-bold border ${
-                    selectedTeams.includes(t.abbr)
-                      ? 'bg-sky-600 text-white border-sky-600'
-                      : 'border-slate-200 dark:border-slate-800'
-                  }`}
-                >
-                  {t.abbr}
-                </button>
-              ))}
+              {MLB_TEAMS.map((t) => {
+                const isSaved = savedMyTeams.includes(t.abbr);
+                return (
+                  <button
+                    key={t.abbr}
+                    type="button"
+                    onClick={() => toggleTeam(t.abbr)}
+                    className={`relative py-2 rounded-lg text-xs font-bold border ${
+                      selectedTeams.includes(t.abbr)
+                        ? 'bg-sky-600 text-white border-sky-600'
+                        : 'border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    {t.abbr}
+                    {isSaved && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400"
+                      />
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <div className="flex gap-2">
               <button
+                type="button"
                 onClick={saveMyTeams}
                 className="flex-1 py-2.5 rounded-lg text-xs font-bold border border-sky-500 text-sky-500"
               >
-                Save My Teams
+                {selectedTeams.length > 0
+                  ? `Save My Teams (${selectedTeams.length})`
+                  : savedMyTeams.length > 0
+                  ? 'Clear My Teams'
+                  : 'Save My Teams'}
               </button>
               <button
+                type="button"
                 onClick={() => setMobileFilterOpen(false)}
                 className="flex-1 py-2.5 rounded-lg text-xs font-bold bg-sky-600 text-white"
               >
