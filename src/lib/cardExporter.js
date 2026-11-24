@@ -207,8 +207,13 @@ export async function exportPlayerCardPng({
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 
-  // Club & Position pill
-  const clubLabel = `${teamInfo?.name || 'MLB'}  •  ${playerStats.position || 'MLB'}${playerStats.primaryNumber ? `  •  #${playerStats.primaryNumber}` : ''}`;
+  // Club & Position pill (omit club when discontinued or unavailable)
+  const clubParts = [
+    playerStats.currentTeamAbbr && teamInfo?.name ? teamInfo.name : null,
+    playerStats.position || 'MLB',
+    playerStats.primaryNumber ? `#${playerStats.primaryNumber}` : null,
+  ].filter(Boolean);
+  const clubLabel = clubParts.join('  •  ');
   ctx.fillStyle = 'rgba(255,255,255,0.78)';
   ctx.font = '700 14px "JetBrains Mono", monospace';
   ctx.fillText(clubLabel.toUpperCase(), textX, 74);
@@ -217,9 +222,12 @@ export async function exportPlayerCardPng({
   ctx.font = '800 44px "Plus Jakarta Sans", Inter, sans-serif';
   ctx.fillText(fitText(ctx, playerStats.fullName, 740), textX, 124);
 
+  const batsCode = playerStats.bats || playerStats.batSide;
+  const throwsCode = playerStats.throws || playerStats.pitchHand;
+  const hasBT = batsCode && throwsCode && batsCode !== '—' && throwsCode !== '—';
   const bioParts = [
-    playerStats.age ? `Age ${playerStats.age}` : null,
-    playerStats.batSide && playerStats.pitchHand ? `B/T: ${playerStats.batSide}/${playerStats.pitchHand}` : null,
+    playerStats.age && playerStats.age !== '—' ? `Age ${playerStats.age}` : null,
+    hasBT ? `B/T: ${batsCode}/${throwsCode}` : null,
     playerStats.height && playerStats.weight ? `${playerStats.height}, ${playerStats.weight} lbs` : null,
     playerStats.mlbDebutDate ? `Debut ${String(playerStats.mlbDebutDate).slice(0, 4)}` : null,
   ].filter(Boolean);
