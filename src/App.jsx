@@ -4,12 +4,22 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale, Package
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale, Pin, User
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { exportPlayerCardPng, exportCompareCardPng } from './lib/cardExporter';
-import PackHub from './components/PackHub';
-import { loadPackVault, savePackVault, getCooldownRemainingMs, formatCooldownShort, buildBoxScorePool, ripSinglePack, CURRENT_SERIES } from './lib/packEngine';
+import ProfileHub from './components/ProfileHub';
+import PlayerPortrait from './components/PlayerPortrait';
+import {
+  loadPinnedPlayers,
+  savePinnedPlayers,
+  loadUserProfile,
+  saveUserProfile,
+  getProfileDisplayName,
+  isEligibleToPinPlayer,
+  normalizePinnedPlayer,
+  resolveActiveTeamAbbr,
+} from './lib/pinnedPlayers';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
 import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
@@ -921,39 +931,16 @@ function DatePickerPopover({ value, onChange }) {
   );
 }
 
-function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md' }) {
-  const [imgError, setImgError] = useState(false);
-  useEffect(() => {
-    setImgError(false);
-  }, [playerId]);
-  const team = getTeamInfo(teamAbbr);
-  const initials = (playerName || team.abbr || 'ML')
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-
-  const dims = size === 'sm' ? 'w-10 h-10 text-xs' : size === 'lg' ? 'w-16 h-16 text-lg' : 'w-12 h-12 text-sm';
-
+function PlayerAvatar({ playerId, playerName, teamAbbr, size = 'md', rounded = 'full', className = '' }) {
   return (
-    <div
-      className={`${dims} rounded-full flex items-center justify-center font-bold shrink-0 overflow-hidden bg-slate-200 dark:bg-slate-800`}
-      style={{ border: `2.5px solid ${team.color}` }}
-    >
-      {playerId && !imgError ? (
-        <img
-          src={`https://midfield.mlbstatic.com/v1/people/${playerId}/spots/120`}
-          alt={playerName || 'Player'}
-          onError={() => setImgError(true)}
-          className="w-full h-full object-cover"
-        />
-      ) : (
-        <span style={{ color: team.color }} className="tracking-tight">
-          {initials}
-        </span>
-      )}
-    </div>
+    <PlayerPortrait
+      playerId={playerId}
+      playerName={playerName}
+      teamAbbr={teamAbbr}
+      size={size}
+      rounded={rounded}
+      className={className}
+    />
   );
 }
 
@@ -970,10 +957,10 @@ export default function App() {
     const root = document.documentElement;
     if (darkMode) {
       root.classList.add('dark');
-      localStorage.setItem('hst_theme', 'dark');
+      try { localStorage.setItem('hst_theme', 'dark'); } catch {}
     } else {
       root.classList.remove('dark');
-      localStorage.setItem('hst_theme', 'light');
+      try { localStorage.setItem('hst_theme', 'light'); } catch {}
     }
   }, [darkMode]);
 
@@ -984,83 +971,62 @@ export default function App() {
   const [tabDirection, setTabDirection] = useState('right');
   const [, setClockTick] = useState(0);
 
-  // Card Packs & Collector Binder state (v3.0)
-  const [packsOpen, setPacksOpen] = useState(false);
-  const [packVault, setPackVault] = useState(() => loadPackVault());
-  const [packNowMs, setPackNowMs] = useState(() => Date.now());
-  const [pendingPackReveal, setPendingPackReveal] = useState(null);
+  // Profile & Pinned Favorite Players state (mirrors hst_my_teams browser storage pattern)
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState(() => loadUserProfile());
+  const [pinnedPlayers, setPinnedPlayers] = useState(() => loadPinnedPlayers());
 
   useEffect(() => {
-    savePackVault(packVault);
-  }, [packVault]);
+    savePinnedPlayers(pinnedPlayers);
+  }, [pinnedPlayers]);
 
   useEffect(() => {
-    const id = setInterval(() => setPackNowMs(Date.now()), 15000);
-    return () => clearInterval(id);
-  }, []);
+    saveUserProfile(userProfile);
+  }, [userProfile]);
 
-  const packCooldownMs = getCooldownRemainingMs(packVault, packNowMs);
-  const isPackReady = packCooldownMs <= 0;
+  const pinnedPlayerIdSet = useMemo(
+    () => new Set(pinnedPlayers.map((p) => Number(p.playerId))),
+    [pinnedPlayers]
+  );
 
-  const openPacksView = () => {
+  const profileDisplayName = getProfileDisplayName(userProfile);
+
+  const openProfileView = () => {
     setSelectedPlayer(null);
     setCompareOpen(false);
     setSelectedGamePk(null);
-    setPacksOpen(true);
-    setPackNowMs(Date.now());
-    if (games.length === 0) {
-      fetchScores(getLocalDateStr(), true);
-    }
+    setProfileOpen(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Auto-open Packs in Sandbox Mode when visiting ?sandbox=1
-  useEffect(() => {
-    const params = getInitialUrlParams();
-    if (params.get('sandbox') === '1') {
-      setPackVault((prev) => ({ ...prev, testMode: true }));
-      setPacksOpen(true);
-    }
-  }, []);
+  const togglePinnedPlayer = (candidate, e) => {
+    if (e) e.stopPropagation();
+    const rawId = Number(candidate?.playerId ?? candidate?.id ?? candidate?.player_id);
+    if (!Number.isInteger(rawId) || rawId <= 0) return;
 
-  const handleRipFromOpenBoxScore = () => {
-    if (!boxScore || !selectedGamePk) return;
-    const pool = buildBoxScorePool(boxScore);
-    if (pool.length === 0) {
-      setSyncNotice('No players have appeared in this box score yet.');
-      return;
-    }
-    const res = ripSinglePack({
-      vault: packVault,
-      pool,
-      packMode: 'GAME_CHECKIN',
-      gamePk: selectedGamePk,
-      series: CURRENT_SERIES,
+    setPinnedPlayers((prev) => {
+      const exists = prev.some((p) => Number(p.playerId) === rawId);
+      if (exists) {
+        return prev.filter((p) => Number(p.playerId) !== rawId);
+      }
+      if (!isEligibleToPinPlayer(candidate)) {
+        setSyncNotice('Only MLB players (active, retired, or historical) can be pinned — minor-league prospects are excluded.');
+        return prev;
+      }
+      const normalized = normalizePinnedPlayer(candidate);
+      if (!normalized) return prev;
+      return [normalized, ...prev];
     });
-    if (!res.ok) {
-      setSyncNotice(res.error);
-      return;
-    }
-    setPackVault(res.vault);
-    setPendingPackReveal({
-      card: res.card,
-      isDuplicate: res.isDuplicate,
-      packTitle: `${boxScore.away?.abbr || 'AWY'} @ ${boxScore.home?.abbr || 'HME'} GAME PACK`,
-      packSubtitle: `${pool.length} players from this box score`,
-      packTheme: 'crimson',
-      gamePk: selectedGamePk,
-    });
-    setSelectedGamePk(null);
-    setSelectedPlayer(null);
-    setCompareOpen(false);
-    setPacksOpen(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const clearAllPinnedPlayers = () => {
+    setPinnedPlayers([]);
   };
 
   const switchMainTab = (nextTab) => {
     setSelectedPlayer(null);
     setCompareOpen(false);
-    setPacksOpen(false);
+    setProfileOpen(false);
     setActiveTab((prev) => {
       if (prev !== nextTab) {
         const prevIdx = MAIN_TAB_ORDER.indexOf(prev);
@@ -1112,7 +1078,8 @@ export default function App() {
   const [watchlistIds, setWatchlistIds] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_watchlist');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -1138,15 +1105,21 @@ export default function App() {
   const [loadingPlayerStats, setLoadingPlayerStats] = useState(false);
 
   const [lastVisit] = useState(() => {
-    const prev = localStorage.getItem('hst_last_visit');
-    localStorage.setItem('hst_last_visit', new Date().toISOString());
-    return prev ? new Date(prev).getTime() : Date.now() - 1000 * 60 * 60 * 12;
+    try {
+      const prev = localStorage.getItem('hst_last_visit');
+      localStorage.setItem('hst_last_visit', new Date().toISOString());
+      const ts = prev ? new Date(prev).getTime() : NaN;
+      return Number.isFinite(ts) ? ts : Date.now() - 1000 * 60 * 60 * 12;
+    } catch {
+      return Date.now() - 1000 * 60 * 60 * 12;
+    }
   });
 
   const [savedMyTeams, setSavedMyTeams] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_my_teams');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -1154,7 +1127,8 @@ export default function App() {
   const [selectedTeams, setSelectedTeams] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_my_teams');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -1162,7 +1136,8 @@ export default function App() {
   const [myTeamsOnlyActive, setMyTeamsOnlyActive] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_my_teams');
-      return saved ? JSON.parse(saved).length > 0 : false;
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) && parsed.length > 0;
     } catch {
       return false;
     }
@@ -1188,7 +1163,6 @@ export default function App() {
   const [splitsYear, setSplitsYear] = useState('2026');
   const [loadingSavant, setLoadingSavant] = useState(false);
   const [loadingSplits, setLoadingSplits] = useState(false);
-  const [heroImgError, setHeroImgError] = useState(false);
   const profileReqIdRef = useRef(0);
 
   // Side-by-Side Player Comparison state
@@ -1216,7 +1190,8 @@ export default function App() {
   const [recentPlayers, setRecentPlayers] = useState(() => {
     try {
       const saved = localStorage.getItem('hst_recent_players');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((x) => x && x.id && x.fullName) : [];
     } catch {
       return [];
     }
@@ -1227,7 +1202,7 @@ export default function App() {
     if (!abbr || abbr === 'MLB') return;
     setSelectedPlayer(null);
     setCompareOpen(false);
-    setPacksOpen(false);
+    setProfileOpen(false);
     setSelectedGamePk(null);
     setHubTeam(abbr);
     setHubRosterSearch('');
@@ -1241,7 +1216,7 @@ export default function App() {
     setWatchlistIds((prev) => {
       const exists = prev.includes(playerId);
       const next = exists ? prev.filter((id) => id !== playerId) : [...prev, playerId];
-      localStorage.setItem('hst_watchlist', JSON.stringify(next));
+      try { localStorage.setItem('hst_watchlist', JSON.stringify(next)); } catch {}
       return next;
     });
   };
@@ -1251,9 +1226,8 @@ export default function App() {
     const reqId = ++profileReqIdRef.current;
     setSelectedGamePk(null);
     setCompareOpen(false);
-    setPacksOpen(false);
-    setHeroImgError(false);
-    setSelectedPlayer({ playerId, playerName, teamAbbr });
+    setProfileOpen(false);
+    setSelectedPlayer({ playerId, playerName, teamAbbr: resolveActiveTeamAbbr(teamAbbr) });
     setProfileSubTab('overview');
     setPlayerStats(null);
     setLoadingPlayerStats(true);
@@ -1265,18 +1239,39 @@ export default function App() {
         setPlayerStats(data);
         setProfileStatGroup(data.isPitcher ? 'pitching' : 'hitting');
         if (data?.id && data?.fullName) {
+          const activeAbbr = resolveActiveTeamAbbr(data.currentTeamAbbr);
           setRecentPlayers((prev) => {
             const entry = {
               id: data.id,
               fullName: data.fullName,
               position: data.position || 'MLB',
-              teamAbbr: data.currentTeamAbbr || teamAbbr || 'MLB',
+              teamAbbr: activeAbbr,
+              active: Boolean(data.active),
+              mlbDebutDate: data.mlbDebutDate || '',
+              isProspect: Boolean(data.isProspect),
             };
             const next = [entry, ...prev.filter((x) => x.id !== data.id)].slice(0, 5);
             try {
               localStorage.setItem('hst_recent_players', JSON.stringify(next));
             } catch {}
             return next;
+          });
+          // Silently enrich stored snapshot if this player is already pinned
+          setPinnedPlayers((prev) => {
+            if (!prev.some((p) => Number(p.playerId) === Number(data.id))) return prev;
+            return prev.map((p) =>
+              Number(p.playerId) === Number(data.id)
+                ? normalizePinnedPlayer({
+                    ...p,
+                    fullName: data.fullName,
+                    position: data.position || p.position,
+                    teamAbbr: activeAbbr,
+                    active: Boolean(data.active),
+                    mlbDebutDate: data.mlbDebutDate || p.mlbDebutDate,
+                    pinnedAt: p.pinnedAt,
+                  }) || p
+                : p
+            );
           });
         }
         if (data?.savant?.year) setSavantYear(String(data.savant.year));
@@ -1397,7 +1392,7 @@ export default function App() {
   const openCompareView = (initialPlayerData = null) => {
     setSelectedPlayer(null);
     setCompareOpen(false);
-    setPacksOpen(false);
+    setProfileOpen(false);
     setSelectedGamePk(null);
     setCompareOpen(true);
     setCompareSearchQuery('');
@@ -1552,7 +1547,11 @@ export default function App() {
     const pid = params.get('player');
     const gpk = params.get('game');
     const cmp = params.get('compare');
-    if (cmp) {
+    const prof = params.get('profile');
+    if (prof === '1') {
+      skipUrlSyncRef.current = true;
+      setProfileOpen(true);
+    } else if (cmp) {
       skipUrlSyncRef.current = true;
       setCompareOpen(true);
       const ids = cmp.split(',').filter((x) => /^\d+$/.test(x)).slice(0, 2);
@@ -1560,7 +1559,7 @@ export default function App() {
       if (ids[1]) loadComparePlayer(1, Number(ids[1]));
     } else if (pid && /^\d+$/.test(pid)) {
       skipUrlSyncRef.current = true;
-      openPlayerModal(Number(pid), 'MLB Player', params.get('team') || 'MLB');
+      openPlayerModal(Number(pid), 'MLB Player', params.get('team') || null);
     } else if (gpk && /^\d+$/.test(gpk)) {
       skipUrlSyncRef.current = true;
       openBoxScore(Number(gpk));
@@ -1574,7 +1573,9 @@ export default function App() {
       return;
     }
     const params = new URLSearchParams();
-    if (compareOpen) {
+    if (profileOpen) {
+      params.set('profile', '1');
+    } else if (compareOpen) {
       const ids = [comparePlayers[0]?.id, comparePlayers[1]?.id].filter(Boolean);
       params.set('compare', ids.length > 0 ? ids.join(',') : 'open');
     } else if (selectedPlayer?.playerId) {
@@ -1593,7 +1594,7 @@ export default function App() {
     if (nextSearch !== currentFull) {
       window.history.pushState({}, '', nextSearch);
     }
-  }, [activeTab, hubTeam, scoreDate, selectedPlayer?.playerId, selectedGamePk, compareOpen, comparePlayers[0]?.id, comparePlayers[1]?.id]);
+  }, [activeTab, hubTeam, scoreDate, selectedPlayer?.playerId, selectedGamePk, compareOpen, profileOpen, comparePlayers[0]?.id, comparePlayers[1]?.id]);
 
   // Respond to browser Back / Forward buttons
   useEffect(() => {
@@ -1614,6 +1615,7 @@ export default function App() {
       if (tm && MLB_TEAMS.some((x) => x.abbr === tm)) setHubTeam(tm);
       if (dt && /^\d{4}-\d{2}-\d{2}$/.test(dt)) setScoreDate(dt);
 
+      setProfileOpen(params.get('profile') === '1');
       const cmp = params.get('compare');
       if (cmp) {
         setCompareOpen(true);
@@ -1664,6 +1666,8 @@ export default function App() {
           setTeamMenuOpen(false);
         } else if (comparePickSlot !== null) {
           setComparePickSlot(null);
+        } else if (profileOpen) {
+          setProfileOpen(false);
         } else if (compareOpen) {
           setCompareOpen(false);
         } else if (selectedPlayer) {
@@ -1673,7 +1677,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer, compareOpen, comparePickSlot]);
+  }, [playerSearchOpen, selectedGamePk, mobileFilterOpen, teamMenuOpen, selectedPlayer, compareOpen, comparePickSlot, profileOpen]);
 
   // Track scroll position for floating Back-to-Top button
   useEffect(() => {
@@ -1997,7 +2001,7 @@ export default function App() {
   };
 
   const saveMyTeams = () => {
-    localStorage.setItem('hst_my_teams', JSON.stringify(selectedTeams));
+    try { localStorage.setItem('hst_my_teams', JSON.stringify(selectedTeams)); } catch {}
     setSavedMyTeams(selectedTeams);
     setMyTeamsOnlyActive(selectedTeams.length > 0);
     setSyncNotice(
@@ -2099,7 +2103,7 @@ export default function App() {
             variant="nav"
             className="hidden lg:inline-flex h-14"
             value={activeTab}
-            hiddenIndicator={Boolean(selectedPlayer || compareOpen || packsOpen)}
+            hiddenIndicator={Boolean(selectedPlayer || compareOpen || profileOpen)}
             onChange={switchMainTab}
             options={[
               { id: 'feed', label: 'Live Feed' },
@@ -2113,25 +2117,23 @@ export default function App() {
 
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={openPacksView}
+              onClick={openProfileView}
               className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
-                packsOpen
+                profileOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
-                  : isPackReady
-                  ? 'border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400 hover:border-red-500'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
               }`}
-              title="Open 6-hour Mystery Player Packs & Collector Showcase"
+              title={`Open Profile (${profileDisplayName}) & Pinned Favorite Players`}
             >
-              <span className="relative inline-flex">
-                <Package className="w-3.5 h-3.5 text-sky-500" />
-                {isPackReady && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                )}
+              <User className="w-3.5 h-3.5 text-sky-500" />
+              <span className="hidden xl:inline text-xs">
+                {userProfile?.mode === 'authenticated' && userProfile?.username ? userProfile.username : 'Profile'}
               </span>
-              <span className="hidden xl:inline font-stat text-xs">
-                {isPackReady ? 'Packs' : formatCooldownShort(packCooldownMs)}
-              </span>
+              {pinnedPlayers.length > 0 && (
+                <span className="font-stat text-[10px] font-extrabold px-1.5 py-0.2 rounded-full bg-red-500/15 text-red-600 dark:text-red-400">
+                  {pinnedPlayers.length}
+                </span>
+              )}
             </button>
 
             <button
@@ -2261,21 +2263,24 @@ export default function App() {
       )}
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-6 overflow-x-clip">
-        {/* PACKS & COLLECTOR SHOWCASE VIEW */}
-        {packsOpen ? (
-          <PackHub
-            vault={packVault}
-            setVault={setPackVault}
-            nowMs={packNowMs}
-            freeAgents={freeAgents.length > 0 ? freeAgents : sidebarFreeAgents}
-            transactions={transactions}
-            liveGames={games}
-            onBack={() => setPacksOpen(false)}
+        {/* PROFILE & PINNED FAVORITE PLAYERS VIEW */}
+        {profileOpen ? (
+          <ProfileHub
+            profile={userProfile}
+            pinnedPlayers={pinnedPlayers}
+            savedMyTeams={savedMyTeams}
+            onUnpinPlayer={togglePinnedPlayer}
+            onClearAllPins={clearAllPinnedPlayers}
             onOpenPlayer={openPlayerModal}
-            onOpenBoxScore={openBoxScore}
+            onOpenSearch={() => {
+              setPlayerSearchOpen(true);
+              setGlobalPlayerQuery('');
+              setGlobalPlayerResults([]);
+            }}
+            onOpenTeamHub={openTeamHub}
+            onBack={() => setProfileOpen(false)}
             TeamLogo={TeamLogo}
-            pendingReveal={pendingPackReveal}
-            setPendingReveal={setPendingPackReveal}
+            getTeamBadgeStyle={getTeamBadgeStyle}
           />
         ) : compareOpen ? (() => {
           const [pA, pB] = comparePlayers;
@@ -2580,7 +2585,7 @@ export default function App() {
                                           {resP.fullName} <span className="text-slate-400">({resP.position})</span>
                                         </div>
                                         <div className="text-[10px] text-slate-500">
-                                          {resP.teamName}{resP.age ? ` • Age ${resP.age}` : ''}
+                                          {[resP.teamName, resP.age ? `Age ${resP.age}` : null, !resP.active ? 'Retired' : null].filter(Boolean).join(' • ')}
                                         </div>
                                       </div>
                                     </span>
@@ -2974,6 +2979,34 @@ export default function App() {
                     </div>
                   )}
 
+                  {playerStats?.id && !playerStats?.isProspect && (
+                    <button
+                      onClick={(e) =>
+                        togglePinnedPlayer(
+                          {
+                            playerId: playerStats.id,
+                            fullName: playerStats.fullName,
+                            position: playerStats.position,
+                            teamAbbr: playerStats.currentTeamAbbr,
+                            active: playerStats.active,
+                            mlbDebutDate: playerStats.mlbDebutDate,
+                            isProspect: playerStats.isProspect,
+                          },
+                          e
+                        )
+                      }
+                      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition ${
+                        pinnedPlayerIdSet.has(Number(playerStats.id))
+                          ? 'bg-red-500/15 border-red-500/40 text-red-600 dark:text-red-400'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-red-500/50'
+                      }`}
+                      title={pinnedPlayerIdSet.has(Number(playerStats.id)) ? 'Unpin from Profile' : 'Pin to Profile'}
+                    >
+                      <Pin className={`w-3.5 h-3.5 ${pinnedPlayerIdSet.has(Number(playerStats.id)) ? 'fill-current' : ''}`} />
+                      <span>{pinnedPlayerIdSet.has(Number(playerStats.id)) ? 'Pinned' : 'Pin Player'}</span>
+                    </button>
+                  )}
+
                   {playerStats?.id && (
                     <button
                       onClick={(e) => toggleWatchlist(playerStats.id, playerStats.fullName, e)}
@@ -3005,25 +3038,14 @@ export default function App() {
                 )}
                 <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-5">
                   <div className="flex items-center gap-4">
-                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-900/60 border-2 border-white/40 shrink-0 flex items-center justify-center font-black text-2xl text-white/90">
-                      {!heroImgError ? (
-                        <img
-                          src={`https://midfield.mlbstatic.com/v1/people/${selectedPlayer.playerId}/spots/180`}
-                          alt={playerStats?.fullName || selectedPlayer.playerName}
-                          onError={() => setHeroImgError(true)}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span>
-                          {(playerStats?.fullName || selectedPlayer.playerName || 'ML')
-                            .split(' ')
-                            .map((w) => w[0])
-                            .join('')
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
+                    <PlayerPortrait
+                      playerId={selectedPlayer.playerId}
+                      playerName={playerStats?.fullName || selectedPlayer.playerName}
+                      teamAbbr={playerStats?.currentTeamAbbr || selectedPlayer.teamAbbr}
+                      size="xl"
+                      rounded="lg"
+                      className="!border-2 !border-white/40"
+                    />
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         {playerStats?.primaryNumber && (
@@ -3034,19 +3056,13 @@ export default function App() {
                         <span className="px-2 py-0.5 rounded-md bg-black/30 text-xs font-bold">
                           {playerStats?.positionName || playerStats?.position || 'MLB'}
                         </span>
-                        {playerStats?.currentTeamAbbr ? (
+                        {playerStats?.currentTeamAbbr && playerStats?.currentTeamName && (
                           <button
                             onClick={() => openTeamHub(playerStats.currentTeamAbbr)}
                             className="px-2 py-0.5 rounded-md bg-white text-slate-900 text-xs font-black hover:opacity-90"
                           >
                             {playerStats.currentTeamName}
                           </button>
-                        ) : (
-                          playerStats?.currentTeamName && (
-                            <span className="px-2 py-0.5 rounded-md bg-black/30 text-xs font-bold">
-                              {playerStats.currentTeamName}
-                            </span>
-                          )
                         )}
                       </div>
                       <h2 className="text-2xl sm:text-3xl font-black mt-1">
@@ -3908,6 +3924,12 @@ export default function App() {
                     const cleanNotes = decodeHtml(tx.contract_notes);
                     const effType = getEffectiveMoveType(tx);
                     const isWatchlisted = tx.player_id && watchlistIds.includes(tx.player_id);
+                    const isFeedPlayerPinned = tx.player_id && pinnedPlayerIdSet.has(Number(tx.player_id));
+                    const canPinFeedPlayer = isEligibleToPinPlayer({
+                      playerId: tx.player_id,
+                      fullName: tx.player_name,
+                      is_major_league: tx.is_major_league,
+                    });
                     const badgeLabel =
                       effType === 'FREE_AGENCY'
                         ? 'FREE AGENCY'
@@ -3968,6 +3990,12 @@ export default function App() {
                               {isNew && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-500 text-white">
                                   NEW
+                                </span>
+                              )}
+
+                              {isFeedPlayerPinned && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-500/15 text-red-600 dark:text-red-400">
+                                  <Pin className="w-2.5 h-2.5 fill-current" /> PINNED
                                 </span>
                               )}
 
@@ -4032,29 +4060,68 @@ export default function App() {
                                         </span>
                                       </div>
                                       <div className="space-y-2">
-                                        {side.list.map((p, i) => (
-                                          <button
-                                            key={i}
-                                            type="button"
-                                            onClick={() => openPlayerModal(p.playerId, p.playerName, side.teamAbbr)}
-                                            className={`w-full flex items-center gap-2.5 text-left rounded-lg p-1 -m-1 transition ${
-                                              p.playerId ? 'hover:bg-slate-200/60 dark:hover:bg-slate-800/70 cursor-pointer' : 'cursor-default'
-                                            }`}
-                                          >
-                                            <PlayerAvatar
-                                              playerId={p.playerId}
-                                              playerName={p.playerName}
-                                              teamAbbr={side.teamAbbr}
-                                              size="sm"
-                                            />
-                                            <div className="text-sm font-bold flex items-center gap-1.5">
-                                              <span className={p.playerId ? 'hover:text-sky-500' : ''}>{p.playerName}</span>
-                                              <span className="text-[11px] font-semibold px-1.5 rounded bg-slate-200 dark:bg-slate-800">
-                                                {p.position}
-                                              </span>
+                                        {side.list.map((p, i) => {
+                                          const canPinLeg = isEligibleToPinPlayer({
+                                            playerId: p.playerId,
+                                            fullName: p.playerName,
+                                            is_major_league: tx.is_major_league,
+                                          });
+                                          const legPinned = p.playerId && pinnedPlayerIdSet.has(Number(p.playerId));
+                                          return (
+                                            <div
+                                              key={i}
+                                              className="flex items-center justify-between gap-2 rounded-lg p-1 -m-1 hover:bg-slate-200/60 dark:hover:bg-slate-800/70 transition"
+                                            >
+                                              <button
+                                                type="button"
+                                                onClick={() => openPlayerModal(p.playerId, p.playerName, side.teamAbbr)}
+                                                className={`flex-1 min-w-0 flex items-center gap-2.5 text-left ${
+                                                  p.playerId ? 'cursor-pointer' : 'cursor-default'
+                                                }`}
+                                              >
+                                                <PlayerAvatar
+                                                  playerId={p.playerId}
+                                                  playerName={p.playerName}
+                                                  teamAbbr={side.teamAbbr}
+                                                  size="sm"
+                                                />
+                                                <div className="text-sm font-bold flex items-center gap-1.5 min-w-0">
+                                                  <span className={`truncate ${p.playerId ? 'hover:text-sky-500' : ''}`}>{p.playerName}</span>
+                                                  <span className="text-[11px] font-semibold px-1.5 rounded bg-slate-200 dark:bg-slate-800 shrink-0">
+                                                    {p.position}
+                                                  </span>
+                                                </div>
+                                              </button>
+                                              {canPinLeg && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) =>
+                                                    togglePinnedPlayer(
+                                                      {
+                                                        playerId: p.playerId,
+                                                        fullName: p.playerName,
+                                                        position: p.position,
+                                                        teamAbbr: side.teamAbbr,
+                                                        active: true,
+                                                        is_major_league: tx.is_major_league,
+                                                      },
+                                                      e
+                                                    )
+                                                  }
+                                                  title={legPinned ? `Unpin ${p.playerName}` : `Pin ${p.playerName} to Profile`}
+                                                  aria-label={legPinned ? `Unpin ${p.playerName}` : `Pin ${p.playerName}`}
+                                                  className={`p-1.5 rounded-lg border shrink-0 transition ${
+                                                    legPinned
+                                                      ? 'border-red-500/40 bg-red-500/15 text-red-600 dark:text-red-400'
+                                                      : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:text-red-500 hover:border-red-500/40'
+                                                  }`}
+                                                >
+                                                  <Pin className={`w-3 h-3 ${legPinned ? 'fill-current' : ''}`} />
+                                                </button>
+                                              )}
                                             </div>
-                                          </button>
-                                        ))}
+                                          );
+                                        })}
                                       </div>
                                     </div>
                                   );
@@ -4116,6 +4183,34 @@ export default function App() {
                                           className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-500 hover:underline"
                                         >
                                           <BarChart3 className="w-3 h-3" /> Stats
+                                        </button>
+                                      )}
+                                      {canPinFeedPlayer && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) =>
+                                            togglePinnedPlayer(
+                                              {
+                                                playerId: tx.player_id,
+                                                fullName: tx.player_name,
+                                                position: tx.position,
+                                                headline: cleanHeadline,
+                                                teamAbbr: tx.to_team || tx.from_team,
+                                                active: true,
+                                                is_major_league: tx.is_major_league,
+                                              },
+                                              e
+                                            )
+                                          }
+                                          title={isFeedPlayerPinned ? 'Unpin from Profile' : 'Pin to Profile'}
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border transition ${
+                                            isFeedPlayerPinned
+                                              ? 'border-red-500/40 bg-red-500/15 text-red-600 dark:text-red-400'
+                                              : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:border-red-500/50 hover:text-red-500'
+                                          }`}
+                                        >
+                                          <Pin className={`w-3 h-3 ${isFeedPlayerPinned ? 'fill-current' : ''}`} />
+                                          <span>{isFeedPlayerPinned ? 'Pinned' : 'Pin'}</span>
                                         </button>
                                       )}
                                     </div>
@@ -5775,7 +5870,7 @@ export default function App() {
       </footer>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur grid grid-cols-6 py-2">
-        {!selectedPlayer && !compareOpen && !packsOpen && (
+        {!selectedPlayer && !compareOpen && !profileOpen && (
           <span
             aria-hidden="true"
             className="pointer-events-none absolute top-0 left-0 h-0.5 w-1/6 bg-sky-500 rounded-full hst-sliding-pill"
@@ -5791,7 +5886,7 @@ export default function App() {
           { id: 'leaderboard', label: 'Spend', icon: Trophy },
         ].map((item) => {
           const Icon = item.icon;
-          const active = !selectedPlayer && !compareOpen && !packsOpen && activeTab === item.id;
+          const active = !selectedPlayer && !compareOpen && !profileOpen && activeTab === item.id;
           return (
             <button
               key={item.id}
@@ -5856,38 +5951,76 @@ export default function App() {
                     </div>
                     <div className="space-y-1">
                       {recentPlayers.map((rp) => {
-                        const rpTeam = getTeamInfo(rp.teamAbbr);
+                        const activeAbbr = resolveActiveTeamAbbr(rp.teamAbbr);
+                        const rpTeam = activeAbbr ? getTeamInfo(activeAbbr) : null;
+                        const isPinned = pinnedPlayerIdSet.has(Number(rp.id));
+                        const canPinRecent = isEligibleToPinPlayer({
+                          playerId: rp.id,
+                          fullName: rp.fullName,
+                          isProspect: rp.isProspect,
+                        });
                         return (
-                          <button
+                          <div
                             key={rp.id}
-                            type="button"
                             onClick={() => {
                               setPlayerSearchOpen(false);
-                              openPlayerModal(rp.id, rp.fullName, rp.teamAbbr);
+                              openPlayerModal(rp.id, rp.fullName, activeAbbr);
                             }}
-                            className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left transition"
+                            className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left cursor-pointer transition"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={rp.teamAbbr} size="sm" />
+                              <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={activeAbbr} size="sm" />
                               <div className="min-w-0">
                                 <div className="text-xs sm:text-sm font-bold truncate">{rp.fullName}</div>
-                                <div className="text-[11px] text-slate-500">{rp.position}</div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                  <span>{rp.position || 'MLB'}</span>
+                                  {rpTeam && (
+                                    <span
+                                      className="px-1.5 py-0.2 rounded text-[10px] font-black shadow-sm"
+                                      style={getTeamBadgeStyle(rpTeam.color)}
+                                    >
+                                      {rpTeam.abbr}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm shrink-0"
-                              style={getTeamBadgeStyle(rpTeam.color)}
-                            >
-                              {rpTeam.abbr}
-                            </span>
-                          </button>
+                            {canPinRecent && (
+                              <button
+                                type="button"
+                                onClick={(e) =>
+                                  togglePinnedPlayer(
+                                    {
+                                      playerId: rp.id,
+                                      fullName: rp.fullName,
+                                      position: rp.position,
+                                      teamAbbr: activeAbbr,
+                                      active: rp.active,
+                                      mlbDebutDate: rp.mlbDebutDate,
+                                      isProspect: rp.isProspect,
+                                    },
+                                    e
+                                  )
+                                }
+                                title={isPinned ? `Unpin ${rp.fullName}` : `Pin ${rp.fullName} to Profile`}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border shrink-0 transition ${
+                                  isPinned
+                                    ? 'border-red-500/40 bg-red-500/15 text-red-600 dark:text-red-400'
+                                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 hover:border-red-500/50 hover:text-red-500'
+                                }`}
+                              >
+                                <Pin className={`w-3 h-3 ${isPinned ? 'fill-current' : ''}`} />
+                                <span>{isPinned ? 'Pinned' : 'Pin'}</span>
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
                   </div>
                 ) : (
                   <div className="py-10 text-center text-xs text-slate-400">
-                    Type at least 2 letters to search active and historical MLB players (press <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">/</kbd> anytime).
+                    Type at least 2 letters to search and pin active, retired, or historical MLB players (prospects excluded — press <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">/</kbd> anytime).
                   </div>
                 )
               ) : searchingPlayers ? (
@@ -5899,57 +6032,101 @@ export default function App() {
               ) : (
                 <div className="space-y-1">
                   {globalPlayerResults.map((p) => {
-                    const tInfo = p.teamAbbr ? getTeamInfo(p.teamAbbr) : null;
+                    const activeAbbr = resolveActiveTeamAbbr(p.teamAbbr);
+                    const tInfo = activeAbbr ? getTeamInfo(activeAbbr) : null;
+                    const isPinned = pinnedPlayerIdSet.has(Number(p.id));
+                    const canPin = isEligibleToPinPlayer({
+                      playerId: p.id,
+                      fullName: p.fullName,
+                      mlbDebutDate: p.mlbDebutDate,
+                      isProspect: p.isProspect,
+                      requireDebutCheck: true,
+                    });
+                    const metaBits = [
+                      p.age ? `Age ${p.age}` : null,
+                      p.mlbDebutDate ? `Debut ${p.mlbDebutDate.slice(0, 4)}` : null,
+                    ].filter(Boolean);
+
                     return (
-                      <button
+                      <div
                         key={p.id}
-                        type="button"
                         onClick={() => {
                           setPlayerSearchOpen(false);
-                          openPlayerModal(p.id, p.fullName, p.teamAbbr || 'MLB');
+                          openPlayerModal(p.id, p.fullName, activeAbbr);
                         }}
-                        className="w-full p-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left transition"
+                        className="w-full p-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left cursor-pointer transition"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <PlayerAvatar
                             playerId={p.id}
                             playerName={p.fullName}
-                            teamAbbr={p.teamAbbr || 'MLB'}
+                            teamAbbr={activeAbbr}
                             size="sm"
                           />
                           <div className="min-w-0">
                             <div className="text-sm font-bold truncate flex items-center gap-1.5">
-                              <span>{p.fullName}</span>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
-                                {p.position}
+                              <span className="truncate">{p.fullName}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold shrink-0">
+                                {p.position || 'MLB'}
                               </span>
                             </div>
-                            <div className="text-xs text-slate-500 flex items-center gap-1.5">
-                              {tInfo ? (
+                            <div className="text-xs text-slate-500 flex flex-wrap items-center gap-1.5 mt-0.5">
+                              {tInfo && (
                                 <span
                                   className="px-1.5 py-0.5 rounded text-[10px] font-black shadow-sm"
                                   style={getTeamBadgeStyle(tInfo.color)}
                                 >
                                   {tInfo.abbr}
                                 </span>
-                              ) : (
-                                <span>{p.teamName}</span>
                               )}
-                              {p.age && <span>• Age {p.age}</span>}
-                              {p.mlbDebutDate && <span>• Debut {p.mlbDebutDate.slice(0, 4)}</span>}
+                              {metaBits.length > 0 && (
+                                <span>{metaBits.join(' • ')}</span>
+                              )}
                             </div>
                           </div>
                         </div>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                            p.active
-                              ? 'bg-emerald-500/15 text-emerald-500'
-                              : 'bg-slate-500/15 text-slate-400'
-                          }`}
-                        >
-                          {p.active ? 'Active' : 'Historical'}
-                        </span>
-                      </button>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              p.active
+                                ? 'bg-emerald-500/15 text-emerald-500'
+                                : 'bg-slate-500/15 text-slate-400'
+                            }`}
+                          >
+                            {p.active ? 'Active' : 'Retired'}
+                          </span>
+                          {canPin && (
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                togglePinnedPlayer(
+                                  {
+                                    playerId: p.id,
+                                    fullName: p.fullName,
+                                    position: p.position,
+                                    teamAbbr: activeAbbr,
+                                    active: p.active,
+                                    mlbDebutDate: p.mlbDebutDate,
+                                    isProspect: p.isProspect,
+                                    requireDebutCheck: true,
+                                  },
+                                  e
+                                )
+                              }
+                              title={isPinned ? `Unpin ${p.fullName}` : `Pin ${p.fullName} to Profile`}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                isPinned
+                                  ? 'border-red-500/40 bg-red-500/15 text-red-600 dark:text-red-400'
+                                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-red-500/50 hover:text-red-500'
+                              }`}
+                            >
+                              <Pin className={`w-3 h-3 ${isPinned ? 'fill-current' : ''}`} />
+                              <span>{isPinned ? 'Pinned' : 'Pin'}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -5989,30 +6166,6 @@ export default function App() {
                 )}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                {boxScore && (
-                  <button
-                    type="button"
-                    onClick={handleRipFromOpenBoxScore}
-                    disabled={!isPackReady || (!packVault.testMode && (boxScore.abstractState === 'Preview' || packVault.claimedGamePks.includes(String(selectedGamePk))))}
-                    title={
-                      !packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk))
-                        ? 'Pack already claimed from this game'
-                        : isPackReady
-                        ? 'Rip 1 mystery player pack from this game box score'
-                        : `Next pack ready in ${formatCooldownShort(packCooldownMs)}`
-                    }
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-extrabold bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-45 transition"
-                  >
-                    <Package className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">
-                      {!packVault.testMode && packVault.claimedGamePks.includes(String(selectedGamePk))
-                        ? 'Claimed'
-                        : isPackReady
-                        ? 'Rip Game Pack'
-                        : formatCooldownShort(packCooldownMs)}
-                    </span>
-                  </button>
-                )}
                 <button
                   onClick={() => openBoxScore(selectedGamePk, { silent: true })}
                   disabled={refreshingBoxScore || loadingBoxScore}
