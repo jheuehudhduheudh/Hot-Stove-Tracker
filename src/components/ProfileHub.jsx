@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { ArrowLeft, Pin, Search, User, X, Star, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pin, Search, User, X, Star, Trash2, Check } from 'lucide-react';
 import PlayerPortrait from './PlayerPortrait';
-import { getTeamInfo } from '../data/mlbData';
+import { MLB_TEAMS, getTeamInfo } from '../data/mlbData';
 import {
   resolveActiveTeamAbbr,
   getProfileDisplayName,
@@ -11,6 +11,7 @@ export default function ProfileHub({
   profile,
   pinnedPlayers,
   savedMyTeams = [],
+  onUpdateMyTeams,
   onUnpinPlayer,
   onClearAllPins,
   onOpenPlayer,
@@ -22,6 +23,15 @@ export default function ProfileHub({
 }) {
   const [filterQuery, setFilterQuery] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
+  const [editingTeams, setEditingTeams] = useState(false);
+
+  const toggleStarredTeam = (abbr) => {
+    if (!onUpdateMyTeams) return;
+    const next = savedMyTeams.includes(abbr)
+      ? savedMyTeams.filter((t) => t !== abbr)
+      : [...savedMyTeams, abbr];
+    onUpdateMyTeams(next);
+  };
 
   const isSignedIn = profile?.mode === 'authenticated' && Boolean(profile?.username);
   const displayName = getProfileDisplayName(profile);
@@ -111,31 +121,103 @@ export default function ProfileHub({
           </div>
         </div>
 
-        {/* Saved Starred Teams Quick Strip (if any exist in browser storage) */}
-        {savedMyTeams.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
-              <Star className="w-3 h-3 text-amber-400 fill-current" />
-              Starred Teams:
-            </span>
-            {savedMyTeams.map((abbr) => {
-              const activeAbbr = resolveActiveTeamAbbr(abbr);
-              if (!activeAbbr) return null;
-              const tInfo = getTeamInfo(activeAbbr);
-              return (
-                <button
-                  key={activeAbbr}
-                  type="button"
-                  onClick={() => onOpenTeamHub && onOpenTeamHub(activeAbbr)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 transition"
-                >
-                  {TeamLogo && <TeamLogo abbr={activeAbbr} size="xs" className="!w-4 !h-4" />}
-                  <span>{tInfo.short}</span>
-                </button>
-              );
-            })}
+        {/* Saved Starred Teams Quick Strip + Inline Editor */}
+        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
+                <Star className="w-3 h-3 text-amber-400 fill-current" />
+                My Teams ({savedMyTeams.length}):
+              </span>
+              {savedMyTeams.length === 0 ? (
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  None selected yet
+                </span>
+              ) : (
+                savedMyTeams.map((abbr) => {
+                  const activeAbbr = resolveActiveTeamAbbr(abbr);
+                  if (!activeAbbr) return null;
+                  const tInfo = getTeamInfo(activeAbbr);
+                  return (
+                    <span
+                      key={activeAbbr}
+                      className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onOpenTeamHub && onOpenTeamHub(activeAbbr)}
+                        className="inline-flex items-center gap-1.5 hover:text-sky-500 transition"
+                      >
+                        {TeamLogo && <TeamLogo abbr={activeAbbr} size="xs" className="!w-4 !h-4" />}
+                        <span>{tInfo.short}</span>
+                      </button>
+                      {onUpdateMyTeams && (
+                        <button
+                          type="button"
+                          onClick={() => toggleStarredTeam(activeAbbr)}
+                          title={`Remove ${tInfo.short} from My Teams`}
+                          aria-label={`Remove ${tInfo.short} from My Teams`}
+                          className="ml-0.5 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 transition"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })
+              )}
+            </div>
+
+            {onUpdateMyTeams && (
+              <button
+                type="button"
+                onClick={() => setEditingTeams((v) => !v)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:border-sky-500 transition shrink-0"
+              >
+                {editingTeams ? <Check className="w-3 h-3 text-emerald-500" /> : <Star className="w-3 h-3 text-amber-400" />}
+                <span>{editingTeams ? 'Done' : 'Edit My Teams'}</span>
+              </button>
+            )}
           </div>
-        )}
+
+          {editingTeams && onUpdateMyTeams && (
+            <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 space-y-2.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-slate-500 dark:text-slate-400">
+                  Click teams to add or remove (saves automatically in this browser):
+                </span>
+                {savedMyTeams.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateMyTeams([])}
+                    className="font-bold text-rose-500 hover:underline"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-10 gap-1.5">
+                {MLB_TEAMS.map((t) => {
+                  const active = savedMyTeams.includes(t.abbr);
+                  return (
+                    <button
+                      key={t.abbr}
+                      type="button"
+                      onClick={() => toggleStarredTeam(t.abbr)}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-bold border transition ${
+                        active
+                          ? 'bg-sky-600 text-white border-sky-600'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-400'
+                      }`}
+                    >
+                      {t.abbr}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Pinned Favorite Players List */}
