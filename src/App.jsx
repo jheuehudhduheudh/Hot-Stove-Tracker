@@ -176,12 +176,30 @@ function isFreeAgencyElection(tx) {
   return h.includes('elected free agency') || h.includes('declared free agency');
 }
 
+function isMajorLeagueMove(tx) {
+  if (!tx) return false;
+  if (tx.is_major_league === false) return false;
+  const h = decodeHtml(tx.headline || '');
+  if (/\b(minor league|minor-league|minor league phase|dominican summer league|arizona complex league|florida complex league|dsl|acl|fcl)\b/i.test(h)) {
+    return false;
+  }
+  if (tx.move_type === 'TRADE') {
+    const legs = [...(tx.team_a_receives || []), ...(tx.team_b_receives || [])].filter(
+      (p) => p && p.playerId
+    );
+    if (legs.length > 0 && legs.every((p) => p.level === 'MiLB')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function getEffectiveMoveType(tx) {
   const h = (tx?.headline || '').toLowerCase();
   if (h.includes('injured list') || h.includes('10-day il') || h.includes('15-day il') || h.includes('60-day il') || h.includes('rehab assignment')) {
     return 'INJURED_LIST';
   }
-  if (h.includes('recalled') || h.includes('optioned') || h.includes('selected the contract')) {
+  if (h.includes('recalled') || h.includes('optioned') || h.includes('selected the contract') || h.includes('purchased the contract')) {
     return 'CALLUP_OPTION';
   }
   if (isFreeAgencyElection(tx)) return 'FREE_AGENCY';
@@ -1439,7 +1457,10 @@ export default function App() {
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
-        .order('reported_at', { ascending: false });
+        .order('reported_at', { ascending: false })
+        .order('official_date', { ascending: false })
+        .order('external_id', { ascending: false })
+        .limit(1000);
 
       const { data: meta } = await supabase
         .from('sync_metadata')
@@ -1707,18 +1728,25 @@ export default function App() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Keep "Synced: Xm ago" fresh & auto-sync silently if returning to an idle tab after 15+ minutes
+  // Keep "Synced: Xm ago" fresh & auto-sync silently every 15+ minutes (both while open and on tab return)
   useEffect(() => {
-    const tickId = setInterval(() => setClockTick((t) => t + 1), 60000);
-    const onVisible = () => {
+    const maybeAutoSync = () => {
       if (document.visibilityState !== 'visible') return;
-      setClockTick((t) => t + 1);
       if (lastSyncedAt) {
         const ageMs = Date.now() - new Date(lastSyncedAt).getTime();
         if (ageMs > 15 * 60 * 1000 && !syncing) {
           handleSyncNow(false, true);
         }
       }
+    };
+    const tickId = setInterval(() => {
+      setClockTick((t) => t + 1);
+      maybeAutoSync();
+    }, 60000);
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      setClockTick((t) => t + 1);
+      maybeAutoSync();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -1893,7 +1921,7 @@ export default function App() {
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
-      if (majorLeagueOnly && !tx.is_major_league) return false;
+      if (majorLeagueOnly && !isMajorLeagueMove(tx)) return false;
       if (statusFilter !== 'ALL' && tx.status !== statusFilter) return false;
 
       const effType = getEffectiveMoveType(tx);
@@ -1906,7 +1934,10 @@ export default function App() {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const hay = `${decodeHtml(tx.headline)} ${tx.player_name || ''} ${tx.to_team || ''} ${tx.from_team || ''} ${tx.contract_notes || ''}`.toLowerCase();
+        const tradePlayers = [...(tx.team_a_receives || []), ...(tx.team_b_receives || [])]
+          .map((p) => p?.playerName || '')
+          .join(' ');
+        const hay = `${decodeHtml(tx.headline)} ${tx.player_name || ''} ${tradePlayers} ${tx.to_team || ''} ${tx.from_team || ''} ${tx.team_a || ''} ${tx.team_b || ''} ${tx.contract_notes || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -4158,6 +4189,7 @@ export default function App() {
                                             playerId: p.playerId,
                                             fullName: p.playerName,
                                             is_major_league: tx.is_major_league,
+                                            isProspect: p.isProspect === true || p.level === 'MiLB',
                                           });
                                           const legPinned = p.playerId && pinnedPlayerIdSet.has(Number(p.playerId));
                                           return (
