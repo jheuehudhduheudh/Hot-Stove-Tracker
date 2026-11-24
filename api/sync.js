@@ -256,14 +256,24 @@ const WORD_NUMBERS = {
 };
 
 const SPECULATION_RUMOR_RE =
-  /(\?|receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|listening\s+to|could\s+|might\s+|should\s+|will\s+sign|predicted\s+to|expected\s+to|looking\s+to|hopeful\s+to|trying\s+to|interested\s+in|willing\s+to|rumors|mailbag|live\s+chat|poll|predictions|projections|offseason\s+outlook|stock\s+watch|rankings|candidates|top\s+\d+|podcast|notes:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|shopping\s+|international\s+amateur|draft\s+pick|\bnpb\b|\bkbo\b|mexican\s+league|independent\s+league|in\s+agreement\s+with\s+.*on\s+coaching|hires\s+|hire\s+|manager\s+|coach|front\s+office|general\s+manager)/i;
+  /(\?|receiving\s+.*interest|drawing\s+.*interest|trade\s+interest|listening\s+to|could\s+|might\s+|should\s+|will\s+sign|predicted\s+to|expected\s+to|looking\s+to|hopeful\s+to|trying\s+to|interested\s+in|willing\s+to|rumors|mailbag|live\s+chat|poll|predictions|projections|offseason\s+outlook|stock\s+watch|rankings|candidates|top\s+\d+|podcast|notes:|the\s+opener:|open\s+to|pursuing|eyeing|targeting|linked\s+to|meeting\s+with|unlikely\s+to|shopping\s+|international\s+amateur|draft\s+pick|(?:sign|signs|signed|agree|agrees|agreed)\s+(?:with|in)\s+(?:npb|kbo|japan|korea)|mexican\s+league|independent\s+league|in\s+agreement\s+with\s+.*on\s+coaching|hires\s+|hire\s+|manager\s+|coach|front\s+office|general\s+manager|best\s+fits\s+for|chat\s+transcript)/i;
 
 const DEAL_ACTION_RE =
   /\b(sign|signs|signed|re-sign|re-signs|re-signed|agree|agrees|agreed|extend|extends|extended|extension|avoids?\s+arbitration)\b/i;
 
+function normalizePersonKey(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv)\b/g, '')
+    .replace(/[^a-z]+/g, ' ')
+    .trim();
+}
+
 function extractYearsFromText(text) {
   const s = String(text || '');
-  const digitYears = s.match(/(\d+)[-\s]year/i);
+  const digitYears = s.match(/(\d+)[-\s](?:year|yr)s?\b/i);
   if (digitYears) {
     const y = parseInt(digitYears[1], 10);
     if (y >= 1 && y <= 15) return y;
@@ -281,7 +291,7 @@ function extractYearsFromText(text) {
 function extractMoneyMillionsFromText(text) {
   const s = String(text || '');
   const moneyMatch = s.match(
-    /\$(\d+(?:,\d{3})*(?:\.\d+)?)\s*(MM|M|million|B|billion|K|thousand)?\b/i
+    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\b/i
   );
   if (!moneyMatch) return null;
   const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
@@ -300,113 +310,162 @@ function extractMoneyMillionsFromText(text) {
   return totalMillions;
 }
 
-function parseContractDetails(title, description = '') {
-  // Always prefer figures explicitly stated in the headline before falling back to summary text
-  const cleanDesc = String(description || '')
-    .replace(/[^.]*\b(luxury\s+tax|cbt\s+threshold|qualifying\s+offer|previously\s+earned|made\s+\$|earned\s+\$)[^.]*\.?/gi, ' ');
+function parseContractDetails(title, leadText = '') {
+  // Scope body parsing to opening lead text (~750 chars) and strip CBT/QO/comparison sentences
+  const lead = String(leadText || '')
+    .slice(0, 750)
+    .replace(
+      /[^.]*\b(luxury\s+tax|cbt\s+threshold|qualifying\s+offer|previously\s+earned|made\s+\$|earned\s+\$|compared\s+to|surpasses|behind\s+only|signing\s+bonus\s+pool)[^.]*\.?/gi,
+      ' '
+    );
 
-  const years = extractYearsFromText(title) ?? extractYearsFromText(cleanDesc);
-  const totalMillions = extractMoneyMillionsFromText(title) ?? extractMoneyMillionsFromText(cleanDesc);
+  const years = extractYearsFromText(title) ?? extractYearsFromText(lead);
+  const totalMillions = extractMoneyMillionsFromText(title) ?? extractMoneyMillionsFromText(lead);
 
   const aav = years && totalMillions ? Number((totalMillions / years).toFixed(2)) : null;
   return { years, totalMillions, aav };
 }
 
 const INVALID_PLAYER_CANDIDATE_RE =
-  /^(To|A|An|The|Club|Mutual|Player|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Minor|Major|Contract|Free|Agent|Agents|Left|Right|Reliever|Starter|Pitcher|Catcher|Infielder|Outfielder|Shortstop|Utility|Veteran|Slugger|All|Star|New|York|Los|Angeles|San|Diego|Francisco|St|Louis|Tampa|Bay|Kansas|City|Chicago|White|Red|Blue|Jays|Sox|Mets|Yankees|Dodgers|Cubs|Braves|Astros|Phillies|Padres|Mariners|Rangers|Orioles|Twins|Guardians|Tigers|Royals|Angels|Athletics|Diamondbacks|Rockies|Giants|Cardinals|Pirates|Reds|Brewers|Marlins|Nationals|Rays)\b/i;
+  /^(To|A|An|The|Club|Mutual|Player|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Minor|Major|Contract|Free|Agent|Agents|Left|Right|Reliever|Starter|Pitcher|Catcher|Infielder|Outfielder|Shortstop|Utility|Veteran|Slugger|Star|Japanese|Korean|All|New|York|Los|Angeles|San|Diego|Francisco|St|Louis|Tampa|Bay|Kansas|City|Chicago|White|Red|Blue|Jays|Sox|Mets|Yankees|Dodgers|Cubs|Braves|Astros|Phillies|Padres|Mariners|Rangers|Orioles|Twins|Guardians|Tigers|Royals|Angels|Athletics|Diamondbacks|Rockies|Giants|Cardinals|Pirates|Reds|Brewers|Marlins|Nationals|Rays|Report|Reports|Sources|Source|Deal|Terms|Year|Million)\b/i;
 
+function cleanCandidateName(raw) {
+  let name = String(raw || '')
+    .replace(/\s+(?:To|With|On|For|In|At|Per|Report|Reports|Sources|Ahead|Pending)\b.*$/i, '')
+    .replace(/[,:;]+$/, '')
+    .trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return null;
+  if (INVALID_PLAYER_CANDIDATE_RE.test(name)) return null;
+  if (detectTeamFromText(name)) return null;
+  return name;
+}
+
+// Uses native JS regex literals (never string-escaped RegExp) with full accented-letter support
 function extractReportedPlayerName(title) {
-  const cleaned = String(title || '').replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim();
-  const namePattern =
-    "([A-Z][a-zA-Z.'-]+(?:\s+[A-Z][a-zA-Z.'-]+){1,2}(?:\s+Jr\.|\s+Sr\.|\s+III|\s+II)?)";
+  const cleaned = String(title || '')
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/['’]s\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // Pattern 1: "Position, Player Name Agrees/Signs/Extends..."
+  // Pattern 1: "Mets, Tarik Skubal Agree To ..." / "Guardians, Kris Bubic Agree To ..."
   const commaMatch = cleaned.match(
-    new RegExp(
-      `^[A-Za-z\\s.'-]+,\\s+${namePattern}\\s+(?:Agrees?|Signs?|Re-Signs?|Extends?|Set\\s+To\\s+Sign|In\\s+Agreement)`,
-      'i'
-    )
+    /^[A-Za-zÀ-ÖØ-öø-ÿ\s.'-]+,\s+([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+(?:\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+){1,2}(?:\s+(?:Jr\.|Sr\.|III|II))?)\s+(?:Agrees?|Agreed|Signs?|Signed|Re-Signs?|Re-Signed|Extends?|Extended|Set\s+To\s+Sign|In\s+Agreement|Avoids?)/i
   );
-  if (commaMatch && !INVALID_PLAYER_CANDIDATE_RE.test(commaMatch[1].trim())) {
-    return commaMatch[1].trim();
+  if (commaMatch) {
+    const c = cleanCandidateName(commaMatch[1]);
+    if (c) return c;
   }
 
-  // Pattern 2: "Team To Sign / Signs / Re-Signs / Extends [Pos] Player Name..."
+  // Pattern 2: "Orioles Sign Freddy Peralta" / "Mets To Sign Tarik Skubal" / "Tigers Sign Ha-Seong Kim"
   const afterVerbMatch = cleaned.match(
-    new RegExp(
-      `\\b(?:To\\s+Sign|To\\s+Re-Sign|To\\s+Extend|Sign|Signs|Signed|Re-Sign|Re-Signs|Re-Signed|Extend|Extends|Extended)\\s+(?:Free\\s+Agent\\s+)?(?:(?:RHP|LHP|SP|RP|C|1B|2B|3B|SS|LF|CF|RF|OF|DH|INF|UTL)\\s+)?${namePattern}`
-    )
+    /\b(?:To\s+Sign|To\s+Re-Sign|To\s+Extend|Sign|Signs|Signed|Re-Sign|Re-Signs|Re-Signed|Extend|Extends|Extended)\s+(?:Free\s+Agent\s+)?(?:(?:Star|Veteran|All-Star|Japanese|Korean|NPB|KBO|Former\s+[A-Za-z]+)\s+){0,2}(?:(?:RHP|LHP|SP|RP|C|1B|2B|3B|SS|LF|CF|RF|OF|DH|INF|UTL|Right-Hander|Left-Hander|Pitcher|Reliever|Starter|Slugger|Infielder|Outfielder|Catcher|Shortstop)\s+)?([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+(?:\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+){1,2}(?:\s+(?:Jr\.|Sr\.|III|II))?)/
   );
-  if (afterVerbMatch && !INVALID_PLAYER_CANDIDATE_RE.test(afterVerbMatch[1].trim())) {
-    return afterVerbMatch[1].trim();
+  if (afterVerbMatch) {
+    const c = cleanCandidateName(afterVerbMatch[1]);
+    if (c) return c;
   }
 
-  // Pattern 3: "Player Name Agrees To ... With Team" / "Player Name Signs With Team"
-  const beforeVerbMatch = cleaned.match(
-    new RegExp(
-      `^${namePattern}\\s+(?:Agrees?|Agreed|Signs?|Signed|Re-Signs?|Re-Signed|Extends?|Extended|Set\\s+To\\s+Sign|In\\s+Agreement)\\b`
-    )
+  // Pattern 3: "Blue Jays Agree To 5-Year, $80M Deal With Kaima Taira"
+  const withPlayerMatch = cleaned.match(
+    /\b(?:Deal|Contract|Extension|Agreement|Terms)\s+With\s+(?:Free\s+Agent\s+)?(?:(?:Star|Veteran|Japanese|Korean|NPB|KBO)\s+){0,2}(?:(?:RHP|LHP|SP|RP|C|1B|2B|3B|SS|LF|CF|RF|OF|DH|INF|UTL|Right-Hander|Left-Hander|Pitcher|Reliever|Starter|Slugger|Infielder|Outfielder|Catcher|Shortstop)\s+)?([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+(?:\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+){1,2}(?:\s+(?:Jr\.|Sr\.|III|II))?)/i
   );
-  if (beforeVerbMatch && !INVALID_PLAYER_CANDIDATE_RE.test(beforeVerbMatch[1].trim())) {
-    return beforeVerbMatch[1].trim();
+  if (withPlayerMatch) {
+    const c = cleanCandidateName(withPlayerMatch[1]);
+    if (c) return c;
+  }
+
+  // Pattern 4: "Tarik Skubal Agrees To Nine-Year, $450M Deal With Mets" / "Freddy Peralta Signs With Orioles"
+  const beforeVerbMatch = cleaned.match(
+    /^(?:(?:RHP|LHP|SP|RP|C|1B|2B|3B|SS|LF|CF|RF|OF|DH|INF|UTL)\s+)?([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+(?:\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+){1,2}(?:\s+(?:Jr\.|Sr\.|III|II))?)\s+(?:Agrees?|Agreed|Signs?|Signed|Re-Signs?|Re-Signed|Extends?|Extended|Set\s+To\s+Sign|In\s+Agreement|Avoids?)\b/
+  );
+  if (beforeVerbMatch) {
+    const c = cleanCandidateName(beforeVerbMatch[1]);
+    if (c) return c;
   }
 
   return null;
 }
 
-function parseReportedDealsFromRss(xml) {
+function detectSigningTeamFromTitle(title) {
+  const cleaned = String(title || '')
+    .replace(/\bformer\s+(?:los angeles|new york|san diego|san francisco|st\.?\s*louis|tampa bay|kansas city|chicago|white|red|blue)?\s*[a-z'-]+\b/gi, ' ');
+  const withTeamMatch = cleaned.match(/\b(?:with|join|joins|joined|returning\s+to|return\s+to)\s+(?:the\s+)?([^,.:;!?]{2,40})/i);
+  if (withTeamMatch) {
+    const afterWithTeam = detectTeamFromText(withTeamMatch[1]);
+    if (afterWithTeam) return afterWithTeam;
+  }
+  return detectTeamFromText(cleaned) || detectTeamFromText(title);
+}
+
+function extractXmlTag(block, tagName) {
+  const escaped = tagName.replace(/:/g, '\\:');
+  const cdataRe = new RegExp(`<${escaped}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${escaped}>`, 'i');
+  const cdataHit = block.match(cdataRe);
+  if (cdataHit) return cdataHit[1];
+  const plainRe = new RegExp(`<${escaped}[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'i');
+  return block.match(plainRe)?.[1] || '';
+}
+
+function parseReportedDealsFromRss(xml, sourceLabel = 'MLB Trade Rumors') {
   const deals = [];
-  const itemBlocks = String(xml || '').match(/<item>[\s\S]*?<\/item>/gi) || [];
+  const itemBlocks = String(xml || '').match(/<item\b[\s\S]*?<\/item>/gi) || [];
 
   for (const block of itemBlocks.slice(0, 60)) {
-    const rawTitle =
-      block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i)?.[1] ||
-      block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ||
-      '';
-    const rawDesc =
-      block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i)?.[1] ||
-      block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ||
-      '';
-    const link = (block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '').trim();
-    const pubDate = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '').trim();
+    const rawTitle = extractXmlTag(block, 'title');
+    const rawDesc = extractXmlTag(block, 'description');
+    const rawContent = extractXmlTag(block, 'content:encoded');
+    const link = decodeHtml(extractXmlTag(block, 'link')).trim();
+    const pubDate = decodeHtml(extractXmlTag(block, 'pubDate')).trim();
 
     const title = decodeHtml(rawTitle);
     const description = decodeHtml(rawDesc);
+    const contentText = decodeHtml(rawContent);
+    const bodyText = contentText.length > description.length ? contentText : description;
+    const leadBody = bodyText.slice(0, 800);
 
     if (!title) continue;
     if (SPECULATION_RUMOR_RE.test(title)) continue;
     if (!DEAL_ACTION_RE.test(title)) continue;
 
+    // Only check title + opening 280 chars for minor-league deal phrasing so we never drop an MLB deal
+    // whose 5th paragraph mentions a player's earlier career minor-league contract.
     const isMinorLeague =
-      /\bminor league\b/i.test(title) || /\bminor league deal\b/i.test(description);
+      /\bminor league\b/i.test(title) ||
+      /\bminor league (?:deal|contract)\b/i.test(leadBody.slice(0, 280));
     if (isMinorLeague) continue;
 
-    const team = detectTeamFromText(title);
+    const team = detectSigningTeamFromTitle(title);
     if (!team) continue;
+
+    const playerName = extractReportedPlayerName(title);
+    if (!playerName) continue;
 
     const moveType = /\b(extend|extends|extended|extension)\b/i.test(title)
       ? 'EXTENSION'
       : 'SIGNING';
-    const { years, totalMillions, aav } = parseContractDetails(title, description);
-    const playerName = extractReportedPlayerName(title);
+    const { years, totalMillions, aav } = parseContractDetails(title, leadBody);
+    const noteSource = description || leadBody;
     const notesSnippet =
-      description.length > 160 ? `${description.slice(0, 160)}...` : description;
+      noteSource.length > 180 ? `${noteSource.slice(0, 180).trim()}...` : noteSource;
     const isoPub = safeIsoDate(pubDate);
 
     deals.push({
-      external_id: `mlbtr-deal-${stableHash(link || title)}`,
+      external_id: `mlbtr-deal-${stableHash(`${team}:${normalizePersonKey(playerName)}`)}`,
       headline: title,
+      source_name: `${sourceLabel} (Reported)`,
       source_url: link || 'https://www.mlbtraderumors.com',
       reported_at: isoPub,
       official_date: isoPub.slice(0, 10),
       move_type: moveType,
       to_team: team,
       player_name: playerName,
-      position: extractPositionFromText(`${title} ${description}`),
+      position: extractPositionFromText(`${title} ${leadBody.slice(0, 200)}`),
       contract_years: years,
       total_value_millions: totalMillions,
       aav_millions: aav,
-      contract_notes: notesSnippet,
+      contract_notes: notesSnippet || null,
     });
   }
 
@@ -415,49 +474,71 @@ function parseReportedDealsFromRss(xml) {
 
 async function fetchReportedContractDeals() {
   const feeds = [
-    'https://www.mlbtraderumors.com/feed',
-    'https://www.mlbtraderumors.com/category/transactions/feed',
+    { url: 'https://www.mlbtraderumors.com/feed', label: 'MLB Trade Rumors' },
+    { url: 'https://www.mlbtraderumors.com/feed?paged=2', label: 'MLB Trade Rumors' },
+    { url: 'https://www.mlbtraderumors.com/feed?paged=3', label: 'MLB Trade Rumors' },
+    { url: 'https://www.mlbtraderumors.com/feed?paged=4', label: 'MLB Trade Rumors' },
+    { url: 'https://www.espn.com/espn/rss/mlb/news', label: 'ESPN' },
+    { url: 'https://www.mlb.com/feeds/news/rss.xml', label: 'MLB.com' },
   ];
   const byKey = new Map();
+  let feedsSucceeded = 0;
 
   await Promise.all(
-    feeds.map(async (url) => {
+    feeds.map(async ({ url, label }) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3500);
+      const timer = setTimeout(() => controller.abort(), 5000);
       try {
         const res = await fetch(url, {
           signal: controller.signal,
           cache: 'no-store',
-          headers: { 'User-Agent': 'HotStoveTracker/2.3' },
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (compatible; HotStoveTracker/2.4; +https://github.com/Hot-Stove-Tracker)',
+            Accept: 'application/rss+xml, application/xml, text/xml, */*',
+          },
         });
         if (!res.ok) return;
         const xml = await res.text();
-        for (const deal of parseReportedDealsFromRss(xml)) {
-          const dedupeKey = deal.player_name
-            ? `${deal.to_team}:${deal.player_name.toLowerCase()}`
-            : deal.external_id;
+        if (!xml || !xml.includes('<item')) return;
+        feedsSucceeded++;
+        for (const deal of parseReportedDealsFromRss(xml, label)) {
+          const dedupeKey = `${deal.to_team}:${normalizePersonKey(deal.player_name)}`;
           const prev = byKey.get(dedupeKey);
-          if (!prev || (!prev.total_value_millions && deal.total_value_millions)) {
+          if (!prev) {
             byKey.set(dedupeKey, deal);
+          } else {
+            // Merge best contract fields across sources (e.g., MLBTR headline + ESPN/MLBTR dollar terms)
+            byKey.set(dedupeKey, {
+              ...prev,
+              contract_years: prev.contract_years ?? deal.contract_years ?? null,
+              total_value_millions: prev.total_value_millions ?? deal.total_value_millions ?? null,
+              aav_millions:
+                prev.aav_millions ??
+                deal.aav_millions ??
+                ((prev.contract_years ?? deal.contract_years) &&
+                (prev.total_value_millions ?? deal.total_value_millions)
+                  ? Number(
+                      (
+                        (prev.total_value_millions ?? deal.total_value_millions) /
+                        (prev.contract_years ?? deal.contract_years)
+                      ).toFixed(2)
+                    )
+                  : null),
+              position: prev.position || deal.position || null,
+              contract_notes: prev.contract_notes || deal.contract_notes || null,
+            });
           }
         }
       } catch {
-        // Non-fatal if RSS is unreachable
+        // Non-fatal if an RSS endpoint is unreachable or times out
       } finally {
         clearTimeout(timer);
       }
     })
   );
 
-  return Array.from(byKey.values());
-}
-
-function normalizePersonKey(name) {
-  return String(name || '')
-    .toLowerCase()
-    .replace(/\b(jr\.?|sr\.?|ii|iii|iv)\b/g, '')
-    .replace(/[^a-z]+/g, ' ')
-    .trim();
+  return { deals: Array.from(byKey.values()), feedsSucceeded };
 }
 
 function buildNormalizedRow({
@@ -560,6 +641,9 @@ export default async function handler(req, res) {
   let updatedCount = 0;
   let majorLeagueCount = 0;
   let minorLeagueCount = 0;
+  let reportedCount = 0;
+  let pricedDealsCount = 0;
+  let rssFeedsOk = 0;
   const nowIso = new Date().toISOString();
 
   // Official MLB Stats API Transactions — All 30 MLB Teams (Last 45 Days + 1-day UTC buffer)
@@ -568,11 +652,14 @@ export default async function handler(req, res) {
     const start = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().slice(0, 10);
 
+    // Kick off RSS reported-deals fetch in parallel with official MLB Stats API transactions
+    const reportedDealsPromise = fetchReportedContractDeals();
+
     const mlbRes = await fetch(
       `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${fmt(start)}&endDate=${fmt(end)}`,
       {
         cache: 'no-store',
-        headers: { 'User-Agent': 'HotStoveTracker/2.2' },
+        headers: { 'User-Agent': 'HotStoveTracker/2.4' },
       }
     );
 
@@ -847,10 +934,11 @@ export default async function handler(req, res) {
     majorLeagueCount = mlbRows.length;
     minorLeagueCount = Math.min(milbRows.length, 300);
 
-    // 3. Fetch reported contract years/dollars & attach to matching MLB signings/extensions
+    // 3. Await reported contract years/dollars & attach to matching MLB signings/extensions
     //    (or add REPORTED signing row if a deal is widely reported before MLB's official wire posts it)
-    const reportedDeals = await fetchReportedContractDeals();
+    const { deals: reportedDeals, feedsSucceeded } = await reportedDealsPromise;
     let dealsAttachedCount = 0;
+    let reportedInsertedCount = 0;
     const officialSigningKeys = new Set();
 
     for (const r of rowsToUpsert) {
@@ -969,7 +1057,8 @@ export default async function handler(req, res) {
               );
               if (r.ok) {
                 const j = await r.json();
-                const person = j?.people?.[0];
+                const people = Array.isArray(j?.people) ? j.people : [];
+                const person = people.find((p) => p.active) || people[0];
                 if (person?.id) {
                   resolvedIds.set(normalizePersonKey(nm), {
                     id: Number(person.id),
@@ -1010,9 +1099,10 @@ export default async function handler(req, res) {
           rowsToUpsert.push({
             ...baseRow,
             status: 'REPORTED',
-            source_name: 'MLB Trade Rumors (Reported)',
+            source_name: d.source_name || 'MLB Trade Rumors (Reported)',
             source_url: d.source_url,
           });
+          reportedInsertedCount++;
         }
       }
     }
@@ -1096,14 +1186,25 @@ export default async function handler(req, res) {
         else addedCount++;
       }
     }
+
+    reportedCount = reportedInsertedCount;
+    pricedDealsCount = rowsToUpsert.filter((r) => Number(r.total_value_millions || 0) > 0).length;
+    rssFeedsOk = feedsSucceeded;
   } catch (err) {
     return res.status(500).json({ error: `MLB API sync failed: ${err.message}` });
   }
 
+  const extraBits = [
+    reportedCount > 0 ? `${reportedCount} reported` : null,
+    pricedDealsCount > 0 ? `${pricedDealsCount} contracts priced` : null,
+  ]
+    .filter(Boolean)
+    .join(' • ');
+
   const summary =
     addedCount > 0
-      ? `Synced official MLB feed: ${addedCount} new ${addedCount === 1 ? 'move' : 'moves'} (${majorLeagueCount} MLB tracked)`
-      : `Official MLB feed up to date (${majorLeagueCount} MLB moves verified)`;
+      ? `Synced: ${addedCount} new ${addedCount === 1 ? 'move' : 'moves'}${extraBits ? ` • ${extraBits}` : ''}`
+      : `Feed up to date (${majorLeagueCount} MLB moves${extraBits ? ` • ${extraBits}` : ''})`;
 
   await supabase
     .from('sync_metadata')
@@ -1115,6 +1216,9 @@ export default async function handler(req, res) {
     updatedCount,
     majorLeagueCount,
     minorLeagueCount,
+    reportedCount,
+    pricedDealsCount,
+    rssFeedsOk,
     upgradedCount: 0,
     last_synced_at: nowIso,
     summary,
