@@ -271,31 +271,30 @@ function normalizePersonKey(name) {
     .trim();
 }
 
-function extractYearsFromText(text) {
-  const s = String(text || '');
-  const digitYears = s.match(/(\d+)[-\s](?:year|yr)s?\b/i);
-  if (digitYears) {
-    const y = parseInt(digitYears[1], 10);
-    if (y >= 1 && y <= 15) return y;
-  }
-  const wordYears = s.match(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s]year\b/i
-  );
-  if (wordYears) {
-    const y = WORD_NUMBERS[wordYears[1].toLowerCase()] || null;
-    if (y && y >= 1 && y <= 15) return y;
-  }
-  return null;
+const NON_DEAL_SENTENCE_RE =
+  /\b(luxury\s+tax|cbt\s+threshold|competitive\s+balance\s+tax|qualifying\s+offer|mlbtr\s+predicted|mlbtr\s+projected|we\s+predicted|we\s+projected|our\s+prediction|predicted\s+a|projected\s+a|projected\s+to\s+earn|arbitration\s+projection|coming\s+off\s+a|previously\s+signed|previous\s+contract|prior\s+contract|previous\s+deal|prior\s+deal|last\s+contract|previously\s+earned|earned\s+\$|made\s+\$|owed\s+\$|final\s+year\s+of|compared\s+to|surpasses|behind\s+only|falls\s+short\s+of|similar\s+to|eclipses|signing\s+bonus\s+pool)\b/i;
+
+const EXCLUDED_MONEY_BEFORE_RE =
+  /\b(signing\s+bonus(?:\s+of)?|bonus(?:\s+of)?|buyout(?:\s+of)?|(?:club|mutual|player|vesting)\s+option(?:\s+of|\s+worth|\s+for)?|option\s+(?:of|worth|for)|incentives?\s+(?:of|up\s+to)|escalators?\s+(?:of|up\s+to)|deferrals?\s+of|deferred\s+(?:money\s+of)?|even\s+salaries\s+of|annual\s+salar(?:y|ies)\s+of|base\s+salar(?:y|ies)\s+of|salaries\s+of|salary\s+of|avoids?\s+tax|up\s+to|could\s+reach|can\s+reach|max(?:imum)?\s+(?:value\s+of|of)|worth\s+up\s+to|projected\s+(?:at|for|to\s+earn)|predicted\s+(?:at|for)|earned|made|owed)\s*$/i;
+
+const EXCLUDED_MONEY_AFTER_RE =
+  /^\s*(?:signing\s+bonus|bonus|buyout|(?:club|mutual|player|vesting)\s+option|option\b|per\s+year|per\s+season|annually|a\s+year|each\s+year|each\s+season|in\s+each\s+year|in\s+each\s+season|aav\b|average\s+annual|in\s+incentives|in\s+escalators|in\s+performance\s+bonuses|deferred|in\s+deferrals|qualifying\s+offer|in\s+20\d\d\b)/i;
+
+const NON_CONTRACT_YEAR_AFTER_RE =
+  /^\s*(?:old\b|veteran|vet\b|option|club\s+option|mutual\s+option|player\s+option|vesting\s+option|stretch|span|run\b|hiatus|absence|stint|tenure|career|window|history|wait)/i;
+
+function parseYearToken(tok) {
+  if (!tok) return null;
+  const lower = String(tok).trim().toLowerCase();
+  const n = /^\d+$/.test(lower) ? parseInt(lower, 10) : WORD_NUMBERS[lower] || null;
+  return n && n >= 1 && n <= 15 ? n : null;
 }
 
-function extractMoneyMillionsFromText(text) {
-  const s = String(text || '');
-  const moneyMatch = s.match(
-    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\b/i
-  );
-  if (!moneyMatch) return null;
-  const rawNum = parseFloat(moneyMatch[1].replace(/,/g, ''));
-  const unit = (moneyMatch[2] || '').toLowerCase();
+function parseMoneyTokenToMillions(numStr, unitStr) {
+  if (!numStr) return null;
+  const rawNum = parseFloat(String(numStr).replace(/,/g, ''));
+  if (!Number.isFinite(rawNum) || rawNum <= 0) return null;
+  const unit = String(unitStr || '').trim().toLowerCase();
   let totalMillions = null;
   if (unit === 'b' || unit === 'billion') {
     totalMillions = Number((rawNum * 1000).toFixed(2));
@@ -310,20 +309,260 @@ function extractMoneyMillionsFromText(text) {
   return totalMillions;
 }
 
-function parseContractDetails(title, leadText = '') {
-  // Scope body parsing to opening lead text (~750 chars) and strip CBT/QO/comparison sentences
-  const lead = String(leadText || '')
-    .slice(0, 750)
-    .replace(
-      /[^.]*\b(luxury\s+tax|cbt\s+threshold|qualifying\s+offer|previously\s+earned|made\s+\$|earned\s+\$|compared\s+to|surpasses|behind\s+only|signing\s+bonus\s+pool)[^.]*\.?/gi,
-      ' '
-    );
+function splitIntoSentences(text) {
+  const normalized = String(text || '')
+    .replace(/\b(\d{1,2}:\d{2}\s*(?:am|pm)\s*:)/gi, '\n$1 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return [];
+  return normalized
+    .split(/(?:(?<=[.!?])\s+(?=[A-Z0-9"“])|\n+)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-  const years = extractYearsFromText(title) ?? extractYearsFromText(lead);
-  const totalMillions = extractMoneyMillionsFromText(title) ?? extractMoneyMillionsFromText(lead);
+function isExcludedMoneyContext(text, startIdx, endIdx) {
+  const beforeFull = text.slice(Math.max(0, startIdx - 50), startIdx);
+  const afterFull = text.slice(endIdx, Math.min(text.length, endIdx + 50));
+  // Bound context check to the immediate clause (stop at sentence/semicolon boundary)
+  const before = beforeFull.split(/[.;!?]/).pop() || '';
+  const after = afterFull.split(/[.;!?]/)[0] || '';
+  if (EXCLUDED_MONEY_BEFORE_RE.test(before)) return true;
+  if (EXCLUDED_MONEY_AFTER_RE.test(after)) return true;
+  return false;
+}
 
-  const aav = years && totalMillions ? Number((totalMillions / years).toFixed(2)) : null;
-  return { years, totalMillions, aav };
+function extractCleanYearsFromText(text) {
+  const s = String(text || '');
+  const re =
+    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s](?:year|yr)s?\b/gi;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 28);
+    if (NON_CONTRACT_YEAR_AFTER_RE.test(after)) continue;
+    const before = s.slice(Math.max(0, m.index - 24), m.index);
+    if (/\b(previous|prior|old|former|club|mutual|player|vesting)\s*$/i.test(before)) continue;
+    const y = parseYearToken(m[1]);
+    if (y) return y;
+  }
+  return null;
+}
+
+function extractPairedDealFromText(text) {
+  const s = String(text || '');
+
+  // Pattern A: "five-year, $125MM" / "5-year deal worth $125 million" / "5-yr/$125M"
+  const patA =
+    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s](?:year|yr)s?(?:\s*,\s*|\s*\/\s*|\s+(?:major\s+league\s+)?(?:contract|deal|extension|agreement|guarantee)\s+(?:worth\s+|for\s+|valued\s+at\s+|of\s+|guaranteed\s+at\s+|at\s+)?|\s+(?:worth|for)\s+)\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\b/gi;
+  let m;
+  while ((m = patA.exec(s)) !== null) {
+    const before = s.slice(Math.max(0, m.index - 35), m.index);
+    if (/\b(option|buyout|previous|prior|old|former|predicted|projected|coming\s+off)\b/i.test(before)) {
+      continue;
+    }
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 35);
+    if (/^\s*(?:club\s+option|mutual\s+option|player\s+option|vesting\s+option|option\b|buyout\b)/i.test(after)) {
+      continue;
+    }
+    const years = parseYearToken(m[1]);
+    const totalMillions = parseMoneyTokenToMillions(m[2], m[3]);
+    if (years && totalMillions) {
+      return { years, totalMillions };
+    }
+  }
+
+  // Pattern B: "$125MM over five years" / "$125 million contract over 5 years"
+  const patB =
+    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\s+(?:(?:guaranteed\s+)?(?:contract|deal|extension|guarantee)\s+)?(?:over|for)\s+(?:the\s+next\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)[-\s](?:year|yr|season)s?\b/gi;
+  while ((m = patB.exec(s)) !== null) {
+    if (isExcludedMoneyContext(s, m.index, m.index + m[0].length)) continue;
+    const totalMillions = parseMoneyTokenToMillions(m[1], m[2]);
+    const years = parseYearToken(m[3]);
+    if (years && totalMillions) {
+      return { years, totalMillions };
+    }
+  }
+
+  return null;
+}
+
+function extractExplicitGuaranteeFromText(text) {
+  const s = String(text || '');
+  const patterns = [
+    /\b(?:total\s+guarantee\s+of|guarantee\s+of|guaranteed\s+(?:at\s+)?|contract\s+worth|deal\s+worth|extension\s+worth|worth|valued\s+at)\s+\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\b/gi,
+    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\s+(?:total\s+)?(?:guarantee|guaranteed|contract|deal|extension)\b/gi,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      const dollarIdx = m[0].indexOf('$');
+      const absStart = m.index + Math.max(0, dollarIdx);
+      const absEnd = m.index + m[0].length;
+      if (isExcludedMoneyContext(s, absStart, absEnd)) continue;
+      const val = parseMoneyTokenToMillions(m[1], m[2]);
+      if (val) return val;
+    }
+  }
+  return null;
+}
+
+function extractBonusPlusAnnualBreakdown(text, knownYears) {
+  if (!knownYears || knownYears < 2) return null;
+  const s = String(text || '');
+
+  // Match signing bonus: "$10MM signing bonus" or "signing bonus of $10MM"
+  let bonusMillions = 0;
+  const bonusBefore = s.match(
+    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|K|thousand)?\s+signing\s+bonus\b/i
+  );
+  const bonusAfter = s.match(
+    /\bsigning\s+bonus\s+of\s+\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|K|thousand)?\b/i
+  );
+  const bonusMatch = bonusBefore || bonusAfter;
+  if (bonusMatch) {
+    bonusMillions = parseMoneyTokenToMillions(bonusMatch[1], bonusMatch[2]) || 0;
+  }
+
+  // Match uniform annual salary: "even salaries of $23MM in each year" / "$23MM per year" / "$23MM annually"
+  const annualPatterns = [
+    /\b(?:even\s+salaries\s+of|annual\s+salar(?:y|ies)\s+of|base\s+salar(?:y|ies)\s+of|salaries\s+of)\s+\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|K|thousand)?\s*(?:per\s+year|per\s+season|annually|in\s+each\s+(?:year|season)|each\s+(?:year|season))?\b/i,
+    /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|K|thousand)?\s+(?:per\s+year|per\s+season|annually|in\s+each\s+(?:year|season)|each\s+(?:year|season))\b/i,
+  ];
+  let annualMillions = null;
+  for (const re of annualPatterns) {
+    const am = s.match(re);
+    if (am) {
+      annualMillions = parseMoneyTokenToMillions(am[1], am[2]);
+      if (annualMillions) break;
+    }
+  }
+
+  if (!annualMillions) return null;
+  const computedTotal = Number((bonusMillions + annualMillions * knownYears).toFixed(2));
+  if (computedTotal < 0.5 || computedTotal > 2000) return null;
+  return computedTotal;
+}
+
+function extractCleanStandaloneMoney(text) {
+  const s = String(text || '');
+  const re = /\$(\d+(?:,\d{3})*(?:\.\d+)?)[-\s]*(MM|M|million|B|billion|K|thousand)?\b/gi;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (isExcludedMoneyContext(s, m.index, m.index + m[0].length)) continue;
+    const val = parseMoneyTokenToMillions(m[1], m[2]);
+    if (val) return val;
+  }
+  return null;
+}
+
+function pickBestContractNote(title, description, bodyText) {
+  const sentences = splitIntoSentences(bodyText.slice(0, 4500));
+  const cleanSentences = sentences
+    .map((s) => s.replace(/^\d{1,2}:\d{2}\s*(?:am|pm)\s*:\s*/i, '').trim())
+    .filter((s) => s.length >= 25 && !NON_DEAL_SENTENCE_RE.test(s));
+
+  // Prefer the sentence that states the paired contract terms (e.g. "five-year, $125MM")
+  const pairedSentence = cleanSentences.find((s) => Boolean(extractPairedDealFromText(s)));
+  if (pairedSentence) {
+    return pairedSentence.length > 180
+      ? `${pairedSentence.slice(0, 180).trim()}...`
+      : pairedSentence;
+  }
+
+  const fallback = String(description || bodyText || '')
+    .replace(/^\d{1,2}:\d{2}\s*(?:am|pm)\s*:\s*/i, '')
+    .trim();
+  if (!fallback) return null;
+  return fallback.length > 180 ? `${fallback.slice(0, 180).trim()}...` : fallback;
+}
+
+function parseContractDetails(title, bodyText = '') {
+  const cleanTitle = String(title || '');
+  // Search up to 4,500 chars so MLBTR reverse-chronological timestamped updates don't push the
+  // original "five-year, $125MM deal" paragraph out of view.
+  const sentences = splitIntoSentences(String(bodyText || '').slice(0, 4500));
+  const cleanSentences = sentences.filter((s) => !NON_DEAL_SENTENCE_RE.test(s));
+  const cleanBody = cleanSentences.join(' ');
+
+  // Tier 4 (Highest confidence): Paired "X-year, $YM" directly in headline
+  const titlePaired = extractPairedDealFromText(cleanTitle);
+  if (titlePaired) {
+    const { years, totalMillions } = titlePaired;
+    return {
+      years,
+      totalMillions,
+      aav: Number((totalMillions / years).toFixed(2)),
+      confidence: 4,
+    };
+  }
+
+  // Tier 3 (High confidence): Paired "X-year, $YM" in a clean article sentence
+  for (const sentence of cleanSentences) {
+    const bodyPaired = extractPairedDealFromText(sentence);
+    if (bodyPaired) {
+      const { years, totalMillions } = bodyPaired;
+      return {
+        years,
+        totalMillions,
+        aav: Number((totalMillions / years).toFixed(2)),
+        confidence: 3,
+      };
+    }
+  }
+
+  // Extract clean years from headline or clean sentences
+  const years = extractCleanYearsFromText(cleanTitle) ?? extractCleanYearsFromText(cleanBody);
+
+  // Tier 2A (Medium-High): Explicit total guarantee phrase ("$125MM guarantee", "worth $125MM")
+  const explicitGuarantee =
+    extractExplicitGuaranteeFromText(cleanTitle) ?? extractExplicitGuaranteeFromText(cleanBody);
+  if (explicitGuarantee) {
+    // Reject obvious signing-bonus/option mistakes on multi-year deals if a bonus+annual breakdown exists
+    const breakdownTotal = extractBonusPlusAnnualBreakdown(cleanBody, years);
+    if (breakdownTotal && years >= 2 && explicitGuarantee < breakdownTotal * 0.6) {
+      return {
+        years,
+        totalMillions: breakdownTotal,
+        aav: Number((breakdownTotal / years).toFixed(2)),
+        confidence: 2,
+      };
+    }
+    return {
+      years,
+      totalMillions: explicitGuarantee,
+      aav: years ? Number((explicitGuarantee / years).toFixed(2)) : null,
+      confidence: 2,
+    };
+  }
+
+  // Tier 2B (Medium-High): Compute exact total from signing bonus + uniform annual salaries
+  // e.g. "$10MM signing bonus and even salaries of $23MM in each year" over 5 years = $125M
+  const breakdownTotal = extractBonusPlusAnnualBreakdown(cleanBody, years);
+  if (breakdownTotal) {
+    return {
+      years,
+      totalMillions: breakdownTotal,
+      aav: Number((breakdownTotal / years).toFixed(2)),
+      confidence: 2,
+    };
+  }
+
+  // Tier 1 (Fallback): Clean standalone dollar amount (not signing bonus, option, buyout, per-year, etc.)
+  const leadClean = cleanSentences.slice(0, 4).join(' ');
+  let standaloneMoney =
+    extractCleanStandaloneMoney(cleanTitle) ?? extractCleanStandaloneMoney(leadClean);
+
+  // Sanity guard: multi-year MLB deals don't average under $1.25M/yr (prevents stray small bonuses/fees)
+  if (years && years >= 2 && standaloneMoney && standaloneMoney / years < 1.25) {
+    standaloneMoney = null;
+  }
+
+  return {
+    years,
+    totalMillions: standaloneMoney,
+    aav: years && standaloneMoney ? Number((standaloneMoney / years).toFixed(2)) : null,
+    confidence: standaloneMoney ? 1 : 0,
+  };
 }
 
 const INVALID_PLAYER_CANDIDATE_RE =
@@ -445,10 +684,8 @@ function parseReportedDealsFromRss(xml, sourceLabel = 'MLB Trade Rumors') {
     const moveType = /\b(extend|extends|extended|extension)\b/i.test(title)
       ? 'EXTENSION'
       : 'SIGNING';
-    const { years, totalMillions, aav } = parseContractDetails(title, leadBody);
-    const noteSource = description || leadBody;
-    const notesSnippet =
-      noteSource.length > 180 ? `${noteSource.slice(0, 180).trim()}...` : noteSource;
+    const { years, totalMillions, aav, confidence } = parseContractDetails(title, bodyText);
+    const notesSnippet = pickBestContractNote(title, description, bodyText);
     const isoPub = safeIsoDate(pubDate);
 
     deals.push({
@@ -457,7 +694,7 @@ function parseReportedDealsFromRss(xml, sourceLabel = 'MLB Trade Rumors') {
       source_name: `${sourceLabel} (Reported)`,
       source_url: link || 'https://www.mlbtraderumors.com',
       reported_at: isoPub,
-      official_date: isoPub.slice(0, 10),
+      official_date: null,
       move_type: moveType,
       to_team: team,
       player_name: playerName,
@@ -465,6 +702,7 @@ function parseReportedDealsFromRss(xml, sourceLabel = 'MLB Trade Rumors') {
       contract_years: years,
       total_value_millions: totalMillions,
       aav_millions: aav,
+      contract_confidence: confidence,
       contract_notes: notesSnippet || null,
     });
   }
@@ -508,25 +746,36 @@ async function fetchReportedContractDeals() {
           if (!prev) {
             byKey.set(dedupeKey, deal);
           } else {
-            // Merge best contract fields across sources (e.g., MLBTR headline + ESPN/MLBTR dollar terms)
+            // Merge best contract fields across sources using parser confidence
+            // (so an explicit paired "5-year, $125M" ALWAYS overrides a low-confidence standalone match)
+            const prevConf = Number(prev.contract_confidence || 0);
+            const nextConf = Number(deal.contract_confidence || 0);
+            const useNextContract =
+              nextConf > prevConf ||
+              (nextConf === prevConf && !prev.total_value_millions && Boolean(deal.total_value_millions));
+            const mergedYears = useNextContract
+              ? deal.contract_years ?? prev.contract_years ?? null
+              : prev.contract_years ?? deal.contract_years ?? null;
+            const mergedTotal = useNextContract
+              ? deal.total_value_millions ?? prev.total_value_millions ?? null
+              : prev.total_value_millions ?? deal.total_value_millions ?? null;
+            const mergedAav =
+              mergedYears && mergedTotal
+                ? Number((mergedTotal / mergedYears).toFixed(2))
+                : useNextContract
+                ? deal.aav_millions ?? prev.aav_millions ?? null
+                : prev.aav_millions ?? deal.aav_millions ?? null;
+
             byKey.set(dedupeKey, {
               ...prev,
-              contract_years: prev.contract_years ?? deal.contract_years ?? null,
-              total_value_millions: prev.total_value_millions ?? deal.total_value_millions ?? null,
-              aav_millions:
-                prev.aav_millions ??
-                deal.aav_millions ??
-                ((prev.contract_years ?? deal.contract_years) &&
-                (prev.total_value_millions ?? deal.total_value_millions)
-                  ? Number(
-                      (
-                        (prev.total_value_millions ?? deal.total_value_millions) /
-                        (prev.contract_years ?? deal.contract_years)
-                      ).toFixed(2)
-                    )
-                  : null),
+              contract_years: mergedYears,
+              total_value_millions: mergedTotal,
+              aav_millions: mergedAav,
+              contract_confidence: Math.max(prevConf, nextConf),
               position: prev.position || deal.position || null,
-              contract_notes: prev.contract_notes || deal.contract_notes || null,
+              contract_notes: useNextContract
+                ? deal.contract_notes || prev.contract_notes || null
+                : prev.contract_notes || deal.contract_notes || null,
             });
           }
         }
@@ -642,6 +891,8 @@ export default async function handler(req, res) {
   let majorLeagueCount = 0;
   let minorLeagueCount = 0;
   let reportedCount = 0;
+  let upgradedCount = 0;
+  let voidedCount = 0;
   let pricedDealsCount = 0;
   let rssFeedsOk = 0;
   const nowIso = new Date().toISOString();
@@ -907,8 +1158,12 @@ export default async function handler(req, res) {
         isMajorLeague = Boolean(toTeam || fromTeam);
       }
 
+      const textPos = extractPositionFromText(desc);
+      const apiPos = person?.primaryPosition?.abbreviation || null;
       const position =
-        person?.primaryPosition?.abbreviation || extractPositionFromText(desc) || null;
+        apiPos === 'P' && (textPos === 'RHP' || textPos === 'LHP')
+          ? textPos
+          : apiPos || textPos || null;
 
       const row = buildNormalizedRow({
         external_id: extId,
@@ -939,65 +1194,154 @@ export default async function handler(req, res) {
     const { deals: reportedDeals, feedsSucceeded } = await reportedDealsPromise;
     let dealsAttachedCount = 0;
     let reportedInsertedCount = 0;
+    const freshlyParsedExtIds = new Set();
+
+    // Track official signings by BOTH (team + normalized name) AND (team + player_id), plus latest official team per player
     const officialSigningKeys = new Set();
+    const officialSigningByTeamId = new Set();
+    const officialTeamByPlayerId = new Map(); // player_id -> { team, reportedAtMs }
+    const officialTeamByPlayerName = new Map(); // normName -> { team, reportedAtMs }
+
+    const registerOfficialSigning = (toTeam, playerId, playerName, reportedAtIso) => {
+      if (!toTeam) return;
+      const ts = reportedAtIso ? new Date(reportedAtIso).getTime() : 0;
+      if (playerName) {
+        const norm = normalizePersonKey(playerName);
+        if (norm) {
+          officialSigningKeys.add(`${toTeam}:${norm}`);
+          const prev = officialTeamByPlayerName.get(norm);
+          if (!prev || ts >= prev.reportedAtMs) {
+            officialTeamByPlayerName.set(norm, { team: toTeam, reportedAtMs: ts });
+          }
+        }
+      }
+      if (playerId) {
+        const pid = Number(playerId);
+        if (Number.isInteger(pid) && pid > 0) {
+          officialSigningByTeamId.add(`${toTeam}:id:${pid}`);
+          const prev = officialTeamByPlayerId.get(pid);
+          if (!prev || ts >= prev.reportedAtMs) {
+            officialTeamByPlayerId.set(pid, { team: toTeam, reportedAtMs: ts });
+          }
+        }
+      }
+    };
 
     for (const r of rowsToUpsert) {
-      if (['SIGNING', 'EXTENSION'].includes(r.move_type) && r.to_team && r.player_name) {
-        officialSigningKeys.add(`${r.to_team}:${normalizePersonKey(r.player_name)}`);
+      if (['SIGNING', 'EXTENSION'].includes(r.move_type) && r.to_team) {
+        registerOfficialSigning(r.to_team, r.player_id, r.player_name, r.reported_at);
       }
     }
 
-    // Also pull existing OFFICIAL signing keys & saved contracts so we never duplicate or wipe dollars
+    // Pull newest 1,000 existing signings/extensions (ordered newest-first!) so we never duplicate or wipe contract dollars
     const { data: existingSignings } = await supabase
       .from('transactions')
-      .select('id, external_id, player_name, to_team, status, contract_years, total_value_millions, aav_millions, contract_notes')
+      .select('id, external_id, player_id, player_name, to_team, status, reported_at, contract_years, total_value_millions, aav_millions, contract_notes')
       .in('move_type', ['SIGNING', 'EXTENSION'])
+      .order('reported_at', { ascending: false })
       .limit(1000);
 
     const existingContractByKey = new Map();
-    for (const dbRow of existingSignings || []) {
-      if (!dbRow.to_team || !dbRow.player_name) continue;
-      const key = `${dbRow.to_team}:${normalizePersonKey(dbRow.player_name)}`;
-      if (dbRow.status === 'OFFICIAL') {
-        officialSigningKeys.add(key);
+    const existingContractByTeamId = new Map();
+    const saveContractCandidate = (map, key, dbRow) => {
+      if (!key) return;
+      const prev = map.get(key);
+      if (!prev || (!prev.total_value_millions && dbRow.total_value_millions)) {
+        map.set(key, {
+          contract_years: dbRow.contract_years ?? null,
+          total_value_millions: dbRow.total_value_millions ?? null,
+          aav_millions: dbRow.aav_millions ?? null,
+          contract_notes: dbRow.contract_notes || null,
+        });
       }
-      if (dbRow.contract_years || dbRow.total_value_millions || dbRow.contract_notes) {
-        const prev = existingContractByKey.get(key);
-        if (!prev || (!prev.total_value_millions && dbRow.total_value_millions)) {
-          existingContractByKey.set(key, {
-            contract_years: dbRow.contract_years ?? null,
-            total_value_millions: dbRow.total_value_millions ?? null,
-            aav_millions: dbRow.aav_millions ?? null,
-            contract_notes: dbRow.contract_notes || null,
-          });
+    };
+
+    for (const dbRow of existingSignings || []) {
+      if (!dbRow.to_team) continue;
+      if (dbRow.status === 'OFFICIAL') {
+        registerOfficialSigning(dbRow.to_team, dbRow.player_id, dbRow.player_name, dbRow.reported_at);
+      }
+      if (dbRow.status !== 'VOIDED' && (dbRow.contract_years || dbRow.total_value_millions || dbRow.contract_notes)) {
+        if (dbRow.player_name) {
+          saveContractCandidate(existingContractByKey, `${dbRow.to_team}:${normalizePersonKey(dbRow.player_name)}`, dbRow);
+        }
+        if (dbRow.player_id) {
+          saveContractCandidate(existingContractByTeamId, `${dbRow.to_team}:id:${Number(dbRow.player_id)}`, dbRow);
         }
       }
     }
 
     if (reportedDeals.length > 0) {
+      // Resolve MLB player IDs upfront for all reported deals so nickname differences
+      // (e.g. "Kike Hernandez" vs "Enrique Hernandez" or "Mike Soroka" vs "Michael Soroka")
+      // still match and automatically upgrade to OFFICIAL with contract dollars intact!
+      const uniqueReportedNames = Array.from(
+        new Set(reportedDeals.map((d) => d.player_name).filter(Boolean))
+      );
+      const resolvedIds = new Map();
+      await Promise.all(
+        uniqueReportedNames.map(async (nm) => {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 2500);
+          try {
+            const r = await fetch(
+              `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(nm)}`,
+              { signal: ctrl.signal }
+            );
+            if (r.ok) {
+              const j = await r.json();
+              const people = Array.isArray(j?.people) ? j.people : [];
+              const person = people.find((p) => p.active) || people[0];
+              if (person?.id) {
+                resolvedIds.set(normalizePersonKey(nm), {
+                  id: Number(person.id),
+                  position: person.primaryPosition?.abbreviation || null,
+                });
+              }
+            }
+          } catch {
+            // ignore
+          } finally {
+            clearTimeout(t);
+          }
+        })
+      );
+
       const dealsByTeamAndName = new Map();
+      const dealsByTeamAndId = new Map();
       for (const d of reportedDeals) {
-        if (d.to_team && d.player_name) {
-          dealsByTeamAndName.set(`${d.to_team}:${normalizePersonKey(d.player_name)}`, d);
+        if (!d.to_team || !d.player_name) continue;
+        const norm = normalizePersonKey(d.player_name);
+        const matchPerson = resolvedIds.get(norm) || null;
+        d._resolvedId = matchPerson?.id || null;
+        d._resolvedPosition = matchPerson?.position || null;
+        dealsByTeamAndName.set(`${d.to_team}:${norm}`, d);
+        if (d._resolvedId) {
+          dealsByTeamAndId.set(`${d.to_team}:id:${d._resolvedId}`, d);
         }
       }
 
-      // Attach reported contract terms onto matching official rows in rowsToUpsert (strict team + player match)
+      // Attach reported contract terms onto matching official rows in rowsToUpsert (by team+id OR team+name)
       for (let idx = 0; idx < rowsToUpsert.length; idx++) {
         const r = rowsToUpsert[idx];
-        if (!['SIGNING', 'EXTENSION'].includes(r.move_type) || !r.to_team || !r.player_name) continue;
-        const key = `${r.to_team}:${normalizePersonKey(r.player_name)}`;
-        const deal = dealsByTeamAndName.get(key);
+        if (!['SIGNING', 'EXTENSION'].includes(r.move_type) || !r.to_team) continue;
+        const deal =
+          (r.player_id && dealsByTeamAndId.get(`${r.to_team}:id:${Number(r.player_id)}`)) ||
+          (r.player_name && dealsByTeamAndName.get(`${r.to_team}:${normalizePersonKey(r.player_name)}`)) ||
+          null;
 
-        if (deal && (deal.total_value_millions || deal.contract_years || deal.contract_notes)) {
+        if (deal) {
           rowsToUpsert[idx] = {
             ...r,
-            contract_years: deal.contract_years ?? r.contract_years ?? null,
-            total_value_millions: deal.total_value_millions ?? r.total_value_millions ?? null,
-            aav_millions: deal.aav_millions ?? r.aav_millions ?? null,
-            contract_notes: deal.contract_notes || r.contract_notes || null,
+            contract_years: deal.contract_years ?? null,
+            total_value_millions: deal.total_value_millions ?? null,
+            aav_millions: deal.aav_millions ?? null,
+            contract_notes: deal.contract_notes || null,
           };
-          dealsAttachedCount++;
+          freshlyParsedExtIds.add(r.external_id);
+          if (deal.total_value_millions || deal.contract_years) {
+            dealsAttachedCount++;
+          }
         }
       }
 
@@ -1005,13 +1349,15 @@ export default async function handler(req, res) {
       const upsertExtSet = new Set(rowsToUpsert.map((r) => r.external_id));
       const olderDbUpdates = [];
       for (const dbRow of existingSignings || []) {
-        if (!dbRow.to_team || !dbRow.player_name || upsertExtSet.has(dbRow.external_id)) continue;
-        const key = `${dbRow.to_team}:${normalizePersonKey(dbRow.player_name)}`;
-        const deal = dealsByTeamAndName.get(key);
-        if (!deal || (!deal.total_value_millions && !deal.contract_years)) continue;
-        const nextYears = deal.contract_years ?? dbRow.contract_years ?? null;
-        const nextTotal = deal.total_value_millions ?? dbRow.total_value_millions ?? null;
-        const nextAav = deal.aav_millions ?? dbRow.aav_millions ?? null;
+        if (!dbRow.to_team || dbRow.status === 'VOIDED' || upsertExtSet.has(dbRow.external_id)) continue;
+        const deal =
+          (dbRow.player_id && dealsByTeamAndId.get(`${dbRow.to_team}:id:${Number(dbRow.player_id)}`)) ||
+          (dbRow.player_name && dealsByTeamAndName.get(`${dbRow.to_team}:${normalizePersonKey(dbRow.player_name)}`)) ||
+          null;
+        if (!deal) continue;
+        const nextYears = deal.contract_years ?? null;
+        const nextTotal = deal.total_value_millions ?? null;
+        const nextAav = deal.aav_millions ?? null;
         const nextNotes = deal.contract_notes || dbRow.contract_notes || null;
         if (
           nextYears !== dbRow.contract_years ||
@@ -1036,78 +1382,56 @@ export default async function handler(req, res) {
         await Promise.all(olderDbUpdates);
       }
 
-      // Add breaking reported signings/extensions not yet confirmed OFFICIAL on MLB's wire
+      // Add breaking reported signings/extensions NOT yet confirmed OFFICIAL on MLB's wire
       const unmatchedDeals = reportedDeals.filter((d) => {
         if (!d.to_team || !d.player_name) return false;
-        const key = `${d.to_team}:${normalizePersonKey(d.player_name)}`;
-        return !officialSigningKeys.has(key);
+        const norm = normalizePersonKey(d.player_name);
+        if (officialSigningKeys.has(`${d.to_team}:${norm}`)) return false;
+        if (d._resolvedId && officialSigningByTeamId.has(`${d.to_team}:id:${d._resolvedId}`)) return false;
+        // Also skip if MLB already confirmed this player officially signed with a DIFFERENT team after this report
+        const repTs = d.reported_at ? new Date(d.reported_at).getTime() : 0;
+        const offById = d._resolvedId ? officialTeamByPlayerId.get(d._resolvedId) : null;
+        const offByName = officialTeamByPlayerName.get(norm);
+        const offMatch = offById || offByName;
+        if (offMatch && offMatch.team !== d.to_team && offMatch.reportedAtMs >= repTs - 36 * 60 * 60 * 1000) {
+          return false;
+        }
+        return true;
       });
 
-      if (unmatchedDeals.length > 0) {
-        const lookupNames = unmatchedDeals.map((d) => d.player_name).filter(Boolean);
-        const resolvedIds = new Map();
-        await Promise.all(
-          lookupNames.map(async (nm) => {
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 2500);
-            try {
-              const r = await fetch(
-                `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(nm)}`,
-                { signal: ctrl.signal }
-              );
-              if (r.ok) {
-                const j = await r.json();
-                const people = Array.isArray(j?.people) ? j.people : [];
-                const person = people.find((p) => p.active) || people[0];
-                if (person?.id) {
-                  resolvedIds.set(normalizePersonKey(nm), {
-                    id: Number(person.id),
-                    position: person.primaryPosition?.abbreviation || null,
-                  });
-                }
-              }
-            } catch {
-              // ignore
-            } finally {
-              clearTimeout(t);
-            }
-          })
-        );
-
-        for (const d of unmatchedDeals) {
-          if (seenExtIds.has(d.external_id)) continue;
-          seenExtIds.add(d.external_id);
-          const matchPerson = d.player_name ? resolvedIds.get(normalizePersonKey(d.player_name)) : null;
-          const baseRow = buildNormalizedRow({
-            external_id: d.external_id,
-            move_type: d.move_type,
-            is_major_league: true,
-            headline: d.headline,
-            reported_at: d.reported_at,
-            official_date: d.official_date,
-            player_id: matchPerson?.id || null,
-            player_name: d.player_name,
-            position: matchPerson?.position || d.position,
-            from_team: null,
-            to_team: d.to_team,
-            contract_years: d.contract_years ?? null,
-            total_value_millions: d.total_value_millions ?? null,
-            aav_millions: d.aav_millions ?? null,
-            contract_notes: d.contract_notes || null,
-            updated_at: nowIso,
-          });
-          rowsToUpsert.push({
-            ...baseRow,
-            status: 'REPORTED',
-            source_name: d.source_name || 'MLB Trade Rumors (Reported)',
-            source_url: d.source_url,
-          });
-          reportedInsertedCount++;
-        }
+      for (const d of unmatchedDeals) {
+        if (seenExtIds.has(d.external_id)) continue;
+        seenExtIds.add(d.external_id);
+        const baseRow = buildNormalizedRow({
+          external_id: d.external_id,
+          move_type: d.move_type,
+          is_major_league: true,
+          headline: d.headline,
+          reported_at: d.reported_at,
+          official_date: null,
+          player_id: d._resolvedId || null,
+          player_name: d.player_name,
+          position: d._resolvedPosition || d.position,
+          from_team: null,
+          to_team: d.to_team,
+          contract_years: d.contract_years ?? null,
+          total_value_millions: d.total_value_millions ?? null,
+          aav_millions: d.aav_millions ?? null,
+          contract_notes: d.contract_notes || null,
+          updated_at: nowIso,
+        });
+        rowsToUpsert.push({
+          ...baseRow,
+          status: 'REPORTED',
+          source_name: d.source_name || 'MLB Trade Rumors (Reported)',
+          source_url: d.source_url,
+        });
+        freshlyParsedExtIds.add(d.external_id);
+        reportedInsertedCount++;
       }
     }
 
-    // 4. Preserve any previously saved contract terms (from older RSS runs or manual edits)
+    // 4. Preserve any previously saved contract terms (from older REPORTED rows or manual edits)
     //    and collect existing external_ids for accurate new vs refreshed counts
     const existingIds = new Set();
     const existingContractsByExtId = new Map();
@@ -1129,12 +1453,20 @@ export default async function handler(req, res) {
 
     for (let idx = 0; idx < rowsToUpsert.length; idx++) {
       const r = rowsToUpsert[idx];
+      // If a fresh RSS article just parsed this signing with the improved parser, trust it
+      // (so previously mis-parsed signing-bonus/option numbers self-heal on sync!)
+      if (freshlyParsedExtIds.has(r.external_id)) continue;
+
       const savedByExt = existingContractsByExtId.get(r.external_id);
+      const savedByTeamId =
+        ['SIGNING', 'EXTENSION'].includes(r.move_type) && r.to_team && r.player_id
+          ? existingContractByTeamId.get(`${r.to_team}:id:${Number(r.player_id)}`)
+          : null;
       const savedByKey =
         ['SIGNING', 'EXTENSION'].includes(r.move_type) && r.to_team && r.player_name
           ? existingContractByKey.get(`${r.to_team}:${normalizePersonKey(r.player_name)}`)
           : null;
-      const fallback = savedByExt || savedByKey;
+      const fallback = savedByExt || savedByTeamId || savedByKey;
       if (fallback) {
         rowsToUpsert[idx] = {
           ...r,
@@ -1146,24 +1478,55 @@ export default async function handler(req, res) {
       }
     }
 
-    // Remove older REPORTED rows that have now been officially confirmed by MLB (prevent duplicates/double-counting)
-    if (officialSigningKeys.size > 0) {
+    // Upgrade REPORTED -> OFFICIAL (delete superseded REPORTED row after MLB confirms)
+    // and mark stale REPORTED rows VOIDED if player officially signed with a DIFFERENT team
+    if (officialSigningKeys.size > 0 || officialSigningByTeamId.size > 0) {
       const { data: oldReportedRows } = await supabase
         .from('transactions')
-        .select('id, to_team, player_name')
+        .select('id, to_team, player_id, player_name, reported_at, status')
+        .eq('status', 'REPORTED')
         .like('external_id', 'mlbtr-deal-%');
 
-      const supersededIds = (oldReportedRows || [])
-        .filter(
-          (row) =>
-            row.to_team &&
-            row.player_name &&
-            officialSigningKeys.has(`${row.to_team}:${normalizePersonKey(row.player_name)}`)
-        )
-        .map((row) => row.id);
+      const supersededIds = [];
+      const voidedIds = [];
+
+      for (const row of oldReportedRows || []) {
+        const pid = row.player_id ? Number(row.player_id) : null;
+        const norm = row.player_name ? normalizePersonKey(row.player_name) : '';
+        const sameTeamConfirmed =
+          (row.to_team && pid && officialSigningByTeamId.has(`${row.to_team}:id:${pid}`)) ||
+          (row.to_team && norm && officialSigningKeys.has(`${row.to_team}:${norm}`));
+
+        if (sameTeamConfirmed) {
+          supersededIds.push(row.id);
+          continue;
+        }
+
+        const repTs = row.reported_at ? new Date(row.reported_at).getTime() : 0;
+        const offMatch =
+          (pid && officialTeamByPlayerId.get(pid)) ||
+          (norm && officialTeamByPlayerName.get(norm)) ||
+          null;
+        if (
+          offMatch &&
+          row.to_team &&
+          offMatch.team !== row.to_team &&
+          offMatch.reportedAtMs >= repTs - 36 * 60 * 60 * 1000
+        ) {
+          voidedIds.push(row.id);
+        }
+      }
 
       if (supersededIds.length > 0) {
         await supabase.from('transactions').delete().in('id', supersededIds);
+        upgradedCount = supersededIds.length;
+      }
+      if (voidedIds.length > 0) {
+        await supabase
+          .from('transactions')
+          .update({ status: 'VOIDED', updated_at: nowIso })
+          .in('id', voidedIds);
+        voidedCount = voidedIds.length;
       }
     }
 
@@ -1195,14 +1558,16 @@ export default async function handler(req, res) {
   }
 
   const extraBits = [
+    upgradedCount > 0 ? `${upgradedCount} confirmed official` : null,
     reportedCount > 0 ? `${reportedCount} reported` : null,
+    voidedCount > 0 ? `${voidedCount} voided` : null,
     pricedDealsCount > 0 ? `${pricedDealsCount} contracts priced` : null,
   ]
     .filter(Boolean)
     .join(' • ');
 
   const summary =
-    addedCount > 0
+    addedCount > 0 || upgradedCount > 0
       ? `Synced: ${addedCount} new ${addedCount === 1 ? 'move' : 'moves'}${extraBits ? ` • ${extraBits}` : ''}`
       : `Feed up to date (${majorLeagueCount} MLB moves${extraBits ? ` • ${extraBits}` : ''})`;
 
@@ -1214,12 +1579,13 @@ export default async function handler(req, res) {
     skipped: false,
     addedCount,
     updatedCount,
+    upgradedCount,
+    voidedCount,
     majorLeagueCount,
     minorLeagueCount,
     reportedCount,
     pricedDealsCount,
     rssFeedsOk,
-    upgradedCount: 0,
     last_synced_at: nowIso,
     summary,
   });
