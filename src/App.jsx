@@ -1984,7 +1984,7 @@ export default function App() {
     });
 
     transactions.forEach((tx) => {
-      if (tx.status === 'VOIDED') return;
+      if (tx.status === 'VOIDED' || !isMajorLeagueMove(tx)) return;
       const teamKey = tx.to_team || tx.team_a;
       if (teamKey && totals[teamKey]) {
         totals[teamKey].totalMoves += 1;
@@ -2004,11 +2004,12 @@ export default function App() {
   }, [transactions]);
 
   const leagueStats = useMemo(() => {
+    const mlbOnlyTx = transactions.filter((t) => t.status !== 'VOIDED' && isMajorLeagueMove(t));
     const totalSpent = spendingLeaderboard.reduce((sum, r) => sum + r.totalMillions, 0);
-    const totalSignings = transactions.filter((t) => t.move_type === 'SIGNING' || t.move_type === 'EXTENSION').length;
-    const totalTrades = transactions.filter((t) => t.move_type === 'TRADE').length;
+    const totalSignings = mlbOnlyTx.filter((t) => t.move_type === 'SIGNING' || t.move_type === 'EXTENSION').length;
+    const totalTrades = mlbOnlyTx.filter((t) => t.move_type === 'TRADE').length;
     const mostActive = [...spendingLeaderboard].sort((a, b) => b.totalMoves - a.totalMoves)[0];
-    return { totalSpent, totalSignings, totalTrades, mostActive };
+    return { totalMlbMoves: mlbOnlyTx.length, totalSpent, totalSignings, totalTrades, mostActive };
   }, [transactions, spendingLeaderboard]);
 
   const reportedSignedByPlayer = useMemo(() => {
@@ -2018,16 +2019,32 @@ export default function App() {
       if (tx.status === 'VOIDED') continue;
       if (!['SIGNING', 'EXTENSION'].includes(tx.move_type) || !tx.to_team) continue;
       const info = { team: tx.to_team, status: tx.status };
-      if (tx.player_id && !byId.has(Number(tx.player_id))) {
-        byId.set(Number(tx.player_id), info);
+      if (tx.player_id) {
+        const pid = Number(tx.player_id);
+        const prev = byId.get(pid);
+        if (!prev || (prev.status !== 'OFFICIAL' && info.status === 'OFFICIAL')) {
+          byId.set(pid, info);
+        }
       }
       if (tx.player_name) {
         const key = tx.player_name.trim().toLowerCase();
-        if (!byName.has(key)) byName.set(key, info);
+        const prev = byName.get(key);
+        if (!prev || (prev.status !== 'OFFICIAL' && info.status === 'OFFICIAL')) {
+          byName.set(key, info);
+        }
       }
     }
     return { byId, byName };
   }, [transactions]);
+
+  const effectiveSidebarFreeAgents = useMemo(() => {
+    return sidebarFreeAgents.filter((fa) => {
+      if (fa.isSigned) return false;
+      if (fa.playerId && reportedSignedByPlayer.byId.has(Number(fa.playerId))) return false;
+      if (fa.fullName && reportedSignedByPlayer.byName.has(fa.fullName.trim().toLowerCase())) return false;
+      return true;
+    });
+  }, [sidebarFreeAgents, reportedSignedByPlayer]);
 
   const filteredFreeAgents = useMemo(() => {
     const enrichedList = freeAgents.map((fa) => {
@@ -2220,7 +2237,7 @@ export default function App() {
             onChange={switchMainTab}
             options={[
               { id: 'feed', label: 'Live Feed' },
-              { id: 'freeAgents', label: `Free Agents (${sidebarFreeAgents.length || freeAgents.length})` },
+              { id: 'freeAgents', label: `Free Agents (${effectiveSidebarFreeAgents.length || freeAgents.length})` },
               { id: 'scoresStandings', label: 'Scores & Standings' },
               { id: 'leaders', label: 'League Leaders' },
               { id: 'teamHub', label: 'Team Hub' },
@@ -3931,7 +3948,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="pt-1">
+                <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
                   <SlidingSegmented
                     variant="underline"
                     value={typeFilter}
@@ -3945,6 +3962,16 @@ export default function App() {
                       { id: 'INJURED_LIST', label: 'Injured List' },
                       { id: 'CALLUP_OPTION', label: 'Call-Ups / Options' },
                       { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
+                    ]}
+                  />
+                  <SlidingSegmented
+                    variant="surface"
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
+                      { id: 'ALL', label: 'All' },
+                      { id: 'OFFICIAL', label: 'Official' },
+                      { id: 'REPORTED', label: 'Reported' },
                     ]}
                   />
                 </div>
@@ -4410,7 +4437,7 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                    <div className="text-xl font-black text-sky-500">{transactions.length}</div>
+                    <div className="text-xl font-black text-sky-500">{leagueStats.totalMlbMoves}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">MLB Moves</div>
                   </div>
                   <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
@@ -4477,13 +4504,13 @@ export default function App() {
                     See all
                   </button>
                 </div>
-                {loadingFreeAgents && sidebarFreeAgents.length === 0 ? (
+                {loadingFreeAgents && effectiveSidebarFreeAgents.length === 0 ? (
                   <p className="text-xs text-slate-400">Loading MLB free agents...</p>
-                ) : sidebarFreeAgents.length === 0 ? (
+                ) : effectiveSidebarFreeAgents.length === 0 ? (
                   <p className="text-xs text-slate-400">No unsigned free agents listed yet.</p>
                 ) : (
                   <div className="space-y-2">
-                    {sidebarFreeAgents.slice(0, 6).map((fa) => (
+                    {effectiveSidebarFreeAgents.slice(0, 6).map((fa) => (
                       <button
                         key={fa.playerId}
                         type="button"
@@ -4700,11 +4727,24 @@ export default function App() {
                                         e.stopPropagation();
                                         openTeamHub(newTeamInfo.abbr);
                                       }}
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 text-[10px] font-stat font-bold text-emerald-500 hover:opacity-85 transition"
-                                      title={`Signed with ${newTeamInfo.name}`}
+                                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-stat font-bold hover:opacity-85 transition ${
+                                        fa.signedStatus === 'REPORTED'
+                                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                                          : 'bg-emerald-500/15 text-emerald-500'
+                                      }`}
+                                      title={
+                                        fa.signedStatus === 'REPORTED'
+                                          ? `Reported agreement with ${newTeamInfo.name}`
+                                          : `Signed with ${newTeamInfo.name}`
+                                      }
                                     >
                                       <TeamLogo abbr={newTeamInfo.abbr} size="xs" className="!w-3.5 !h-3.5" />
                                       <span>{newTeamInfo.abbr}</span>
+                                      {fa.signedStatus === 'REPORTED' && (
+                                        <span className="text-[9px] uppercase tracking-wider opacity-90">
+                                          (Reported)
+                                        </span>
+                                      )}
                                     </button>
                                   </>
                                 );
