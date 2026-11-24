@@ -1977,20 +1977,40 @@ export default function App() {
     setMajorLeagueOnly(true);
   };
 
+  const normalizePlayerNameKey = (name) =>
+    String(name || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\b(jr\.?|sr\.?|ii|iii|iv)\b/g, '')
+      .replace(/[^a-z]+/g, ' ')
+      .trim();
+
   const spendingLeaderboard = useMemo(() => {
     const totals = {};
     MLB_TEAMS.forEach((t) => {
       totals[t.abbr] = { team: t, totalMillions: 0, signingsCount: 0, totalMoves: 0 };
     });
 
+    const maxDealBySigningKey = new Map();
     transactions.forEach((tx) => {
       if (tx.status === 'VOIDED' || !isMajorLeagueMove(tx)) return;
       const teamKey = tx.to_team || tx.team_a;
       if (teamKey && totals[teamKey]) {
         totals[teamKey].totalMoves += 1;
         if (tx.move_type === 'SIGNING' || tx.move_type === 'EXTENSION') {
-          totals[teamKey].totalMillions += Number(tx.total_value_millions || 0);
           totals[teamKey].signingsCount += 1;
+          const val = Number(tx.total_value_millions || 0);
+          if (val > 0) {
+            const pKey = tx.player_name
+              ? `${teamKey}:${normalizePlayerNameKey(tx.player_name)}`
+              : `${teamKey}:tx:${tx.id}`;
+            const prev = maxDealBySigningKey.get(pKey) || 0;
+            if (val > prev) {
+              totals[teamKey].totalMillions += val - prev;
+              maxDealBySigningKey.set(pKey, val);
+            }
+          }
         }
       }
     });
@@ -2027,7 +2047,7 @@ export default function App() {
         }
       }
       if (tx.player_name) {
-        const key = tx.player_name.trim().toLowerCase();
+        const key = normalizePlayerNameKey(tx.player_name);
         const prev = byName.get(key);
         if (!prev || (prev.status !== 'OFFICIAL' && info.status === 'OFFICIAL')) {
           byName.set(key, info);
@@ -2041,7 +2061,7 @@ export default function App() {
     return sidebarFreeAgents.filter((fa) => {
       if (fa.isSigned) return false;
       if (fa.playerId && reportedSignedByPlayer.byId.has(Number(fa.playerId))) return false;
-      if (fa.fullName && reportedSignedByPlayer.byName.has(fa.fullName.trim().toLowerCase())) return false;
+      if (fa.fullName && reportedSignedByPlayer.byName.has(normalizePlayerNameKey(fa.fullName))) return false;
       return true;
     });
   }, [sidebarFreeAgents, reportedSignedByPlayer]);
@@ -2051,7 +2071,7 @@ export default function App() {
       if (fa.isSigned) return fa;
       const match =
         (fa.playerId && reportedSignedByPlayer.byId.get(Number(fa.playerId))) ||
-        (fa.fullName && reportedSignedByPlayer.byName.get(fa.fullName.trim().toLowerCase()));
+        (fa.fullName && reportedSignedByPlayer.byName.get(normalizePlayerNameKey(fa.fullName)));
       if (!match) return fa;
       return {
         ...fa,
