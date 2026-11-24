@@ -2011,8 +2011,40 @@ export default function App() {
     return { totalSpent, totalSignings, totalTrades, mostActive };
   }, [transactions, spendingLeaderboard]);
 
+  const reportedSignedByPlayer = useMemo(() => {
+    const byId = new Map();
+    const byName = new Map();
+    for (const tx of transactions || []) {
+      if (tx.status === 'VOIDED') continue;
+      if (!['SIGNING', 'EXTENSION'].includes(tx.move_type) || !tx.to_team) continue;
+      const info = { team: tx.to_team, status: tx.status };
+      if (tx.player_id && !byId.has(Number(tx.player_id))) {
+        byId.set(Number(tx.player_id), info);
+      }
+      if (tx.player_name) {
+        const key = tx.player_name.trim().toLowerCase();
+        if (!byName.has(key)) byName.set(key, info);
+      }
+    }
+    return { byId, byName };
+  }, [transactions]);
+
   const filteredFreeAgents = useMemo(() => {
-    const list = freeAgents.filter((fa) => {
+    const enrichedList = freeAgents.map((fa) => {
+      if (fa.isSigned) return fa;
+      const match =
+        (fa.playerId && reportedSignedByPlayer.byId.get(Number(fa.playerId))) ||
+        (fa.fullName && reportedSignedByPlayer.byName.get(fa.fullName.trim().toLowerCase()));
+      if (!match) return fa;
+      return {
+        ...fa,
+        isSigned: true,
+        signedTeam: fa.signedTeam || match.team,
+        signedStatus: match.status,
+      };
+    });
+
+    const list = enrichedList.filter((fa) => {
       if (faSignedFilter === 'UNSIGNED' && fa.isSigned) return false;
       if (faSignedFilter === 'SIGNED' && !fa.isSigned) return false;
       if (watchlistOnly && !watchlistIds.includes(fa.playerId)) return false;
@@ -5978,7 +6010,7 @@ export default function App() {
         )}
       </main>
 
-      <footer className="max-w-[1440px] mx-auto px-4 sm:px-6 mt-12 pb-6">
+      <footer className="max-w-[1440px] mx-auto px-4 sm:px-6 mt-12 pb-20 lg:pb-6">
         <div className="pt-5 border-t border-slate-200/80 dark:border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[11px] text-slate-500 dark:text-slate-400">
           <div className="space-y-1">
             <p className="font-semibold text-slate-600 dark:text-slate-300">
@@ -5988,8 +6020,13 @@ export default function App() {
               Not affiliated with, endorsed by, or sponsored by Major League Baseball, MLB Advanced Media, L.P., or the MLBPA. Statistical data provided via MLB Stats API &amp; Baseball Savant; team payroll estimates compiled from public FanGraphs, Spotrac, and AP reports. All video links open directly on MLB.com.
             </p>
           </div>
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
-            For Personal &amp; Fan Use Only
+          <div className="flex flex-col sm:items-end gap-1 shrink-0">
+            <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+              Made by Brandon Au
+            </p>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              For Personal &amp; Fan Use Only
+            </span>
           </div>
         </div>
       </footer>
