@@ -304,21 +304,29 @@ async function handleSearch(q, res) {
     const data = await r.json();
     const people = data?.people || [];
 
+    // Exclude minor-league / unranked prospects (players who have never debuted in MLB),
+    // while keeping active, retired, older, and discontinued-team MLB players.
+    // For discontinued or unavailable teams, omit teamAbbr & teamName cleanly (null).
     const results = people
-      .map((p) => ({
-        id: p.id,
-        fullName: p.fullName || 'Unknown',
-        position: p.primaryPosition?.abbreviation || 'MLB',
-        age: p.currentAge || null,
-        active: Boolean(p.active),
-        mlbDebutDate: p.mlbDebutDate || '',
-        teamAbbr: MLB_TEAM_ID_TO_ABBR[p.currentTeam?.id] || null,
-        teamName: p.currentTeam?.name || (p.active ? 'Free Agent / MiLB' : 'Retired / Historical'),
-      }))
+      .filter((p) => Boolean(p?.id && p?.fullName && p?.mlbDebutDate))
+      .map((p) => {
+        const activeTeamAbbr = MLB_TEAM_ID_TO_ABBR[p.currentTeam?.id] || null;
+        return {
+          id: p.id,
+          fullName: p.fullName || 'Unknown',
+          position: p.primaryPosition?.abbreviation || 'MLB',
+          age: p.currentAge || null,
+          active: Boolean(p.active),
+          mlbDebutDate: p.mlbDebutDate || '',
+          isProspect: false,
+          teamAbbr: activeTeamAbbr,
+          teamName: activeTeamAbbr ? (p.currentTeam?.name || null) : null,
+        };
+      })
       .sort((a, b) => {
-        const aMlb = a.active && a.teamAbbr ? 3 : a.active ? 2 : a.mlbDebutDate ? 1 : 0;
-        const bMlb = b.active && b.teamAbbr ? 3 : b.active ? 2 : b.mlbDebutDate ? 1 : 0;
-        if (bMlb !== aMlb) return bMlb - aMlb;
+        const aRank = a.active && a.teamAbbr ? 3 : a.active ? 2 : 1;
+        const bRank = b.active && b.teamAbbr ? 3 : b.active ? 2 : 1;
+        if (bRank !== aRank) return bRank - aRank;
         return (b.mlbDebutDate || '').localeCompare(a.mlbDebutDate || '');
       })
       .slice(0, 12);
@@ -425,8 +433,9 @@ export default async function handler(req, res) {
       isPitcher,
       isTwoWay,
       active: Boolean(person.active),
+      isProspect: !Boolean(person.mlbDebutDate),
       currentTeamAbbr,
-      currentTeamName: person.currentTeam?.name || (person.active ? 'Free Agent' : 'Retired'),
+      currentTeamName: currentTeamAbbr ? (person.currentTeam?.name || null) : null,
       age: person.currentAge || '—',
       birthDate: person.birthDate || '',
       birthPlace,
