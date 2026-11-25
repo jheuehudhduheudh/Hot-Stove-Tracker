@@ -21,11 +21,17 @@ import {
   resolveActiveTeamAbbr,
 } from './lib/pinnedPlayers';
 import { MLB_TEAMS, DIVISIONS, getTeamInfo, decodeHtml } from './data/mlbData';
-import { PAYROLL_YEARS, CBT_THRESHOLDS, PAYROLL_SOURCES, TEAM_PAYROLLS, getTeamPayrollHistory } from './data/payrollData';
 
-const FA_CLASS_YEARS = Array.from({ length: 12 }, (_, i) => String(2026 - i)); // 2026 -> 2015
-const ALL_SEASON_YEARS = Array.from({ length: 27 }, (_, i) => String(2026 - i)); // 2026 -> 2000
-const QUICK_YEARS = ['2026', '2025', '2024'];
+const NOW_DATE = new Date();
+const LATEST_MLB_SEASON = NOW_DATE.getMonth() >= 2 ? NOW_DATE.getFullYear() : NOW_DATE.getFullYear() - 1;
+const LATEST_OFFSEASON_START = NOW_DATE.getMonth() >= 9 ? NOW_DATE.getFullYear() : NOW_DATE.getFullYear() - 1;
+const OFFSEASON_CYCLES = Array.from({ length: 4 }, (_, i) => {
+  const yr = LATEST_OFFSEASON_START - i;
+  return `${yr}-${String((yr + 1) % 100).padStart(2, '0')}`;
+});
+const FA_CLASS_YEARS = Array.from({ length: 12 }, (_, i) => String(LATEST_MLB_SEASON - i));
+const ALL_SEASON_YEARS = Array.from({ length: Math.max(1, LATEST_MLB_SEASON - 2000 + 1) }, (_, i) => String(LATEST_MLB_SEASON - i));
+const QUICK_YEARS = [String(LATEST_MLB_SEASON), String(LATEST_MLB_SEASON - 1), String(LATEST_MLB_SEASON - 2)];
 const MAIN_TAB_ORDER = ['feed', 'freeAgents', 'scoresStandings', 'leaders', 'teamHub', 'leaderboard'];
 
 const QUICK_JUMP_DATES = [
@@ -1110,10 +1116,16 @@ export default function App() {
   const [hubRosterView, setHubRosterView] = useState('depth');
   const [hubRosterSearch, setHubRosterSearch] = useState('');
 
-  // Spending & Roster Payroll state
-  const [spendingMode, setSpendingMode] = useState('payroll');
-  const [payrollYear, setPayrollYear] = useState('2027');
-  const [spendingCycle, setSpendingCycle] = useState('2026-27');
+  // Live Team Stats & Offseason Activity state (100% MLB Stats API — zero manual updates)
+  const [spendingMode, setSpendingMode] = useState('teamStats');
+  const [teamStatsSeason, setTeamStatsSeason] = useState(String(LATEST_MLB_SEASON));
+  const [teamStatsGroup, setTeamStatsGroup] = useState('overview');
+  const [teamStatsLeague, setTeamStatsLeague] = useState('ALL');
+  const [teamStatsSearch, setTeamStatsSearch] = useState('');
+  const [teamStatsSort, setTeamStatsSort] = useState({ key: 'powerRank', dir: 'asc' });
+  const [teamStatsData, setTeamStatsData] = useState(null);
+  const [loadingTeamStats, setLoadingTeamStats] = useState(false);
+  const [spendingCycle, setSpendingCycle] = useState(OFFSEASON_CYCLES[0]);
   const [spendingApiData, setSpendingApiData] = useState(null);
   const [loadingSpending, setLoadingSpending] = useState(false);
 
@@ -1458,7 +1470,7 @@ export default function App() {
         .from('transactions')
         .select('*')
         .order('reported_at', { ascending: false })
-        .order('official_date', { ascending: false })
+        .order('official_date', { ascending: false, nullsFirst: false })
         .order('external_id', { ascending: false })
         .limit(1000);
 
@@ -1874,6 +1886,46 @@ export default function App() {
   }, [activeTab, hubTeam]);
 
   useEffect(() => {
+    if ((activeTab === 'leaderboard' && spendingMode === 'teamStats') || activeTab === 'teamHub') {
+      if (teamStatsData && String(teamStatsData.requestedSeason) === String(teamStatsSeason)) {
+        return;
+      }
+      let cancelled = false;
+      setLoadingTeamStats(true);
+      fetch(`/api/team-stats?season=${encodeURIComponent(teamStatsSeason)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!cancelled) setTeamStatsData(data);
+        })
+        .catch(() => {
+          if (!cancelled) setTeamStatsData(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingTeamStats(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [activeTab, spendingMode, teamStatsSeason]);
+
+  const switchTeamStatsGroup = (nextGroup) => {
+    setTeamStatsGroup(nextGroup);
+    if (nextGroup === 'overview') setTeamStatsSort({ key: 'powerRank', dir: 'asc' });
+    else if (nextGroup === 'hitting') setTeamStatsSort({ key: 'ops', dir: 'desc' });
+    else if (nextGroup === 'pitching') setTeamStatsSort({ key: 'era', dir: 'asc' });
+    else if (nextGroup === 'fielding') setTeamStatsSort({ key: 'fieldingPct', dir: 'desc' });
+  };
+
+  const toggleTeamStatsSort = (key, defaultDir = 'desc') => {
+    setTeamStatsSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: defaultDir }
+    );
+  };
+
+  useEffect(() => {
     if (activeTab === 'leaderboard' && spendingMode === 'offseason') {
       let cancelled = false;
       setLoadingSpending(true);
@@ -2185,7 +2237,7 @@ export default function App() {
               [
                 t.status,
                 getEffectiveMoveType(t),
-                `"${t.player_name || ''}"`,
+                `"${String(t.player_name || '').replace(/"/g, '""')}"`,
                 t.from_team || '',
                 t.to_team || '',
                 t.contract_years || '',
@@ -2261,7 +2313,7 @@ export default function App() {
               { id: 'scoresStandings', label: 'Scores & Standings' },
               { id: 'leaders', label: 'League Leaders' },
               { id: 'teamHub', label: 'Team Hub' },
-              { id: 'leaderboard', label: 'Payroll & Spend' },
+              { id: 'leaderboard', label: 'Team Stats' },
             ]}
           />
 
@@ -2366,34 +2418,42 @@ export default function App() {
                         </button>
                       );
                     })
-                  : transactions.slice(0, 6).map((tx) => {
-                      const club = getTeamInfo(tx.to_team || tx.from_team);
-                      return (
-                        <button
-                          key={tx.id}
-                          type="button"
-                          onClick={() =>
-                            tx.player_id
-                              ? openPlayerModal(tx.player_id, tx.player_name, club.abbr)
-                              : openTeamHub(club.abbr)
-                          }
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 hover:border-sky-500/50 transition shrink-0"
-                        >
-                          <TeamLogo abbr={club.abbr} size="xs" className="!w-3.5 !h-3.5" />
-                          <span className="font-stat font-bold text-[10px] text-slate-500 dark:text-slate-400">
-                            {club.abbr}
-                          </span>
-                          <span className="font-semibold truncate max-w-[220px]">
-                            {tx.player_name || decodeHtml(tx.headline)}
-                          </span>
-                          {tx.total_value_millions > 0 && (
-                            <span className="font-stat font-bold text-[10px] text-emerald-500">
-                              ${tx.total_value_millions}M
+                  : transactions
+                      .filter((tx) => tx.status !== 'VOIDED' && (!majorLeagueOnly || isMajorLeagueMove(tx)))
+                      .slice(0, 6)
+                      .map((tx) => {
+                        const club = getTeamInfo(tx.to_team || tx.from_team);
+                        return (
+                          <button
+                            key={tx.id}
+                            type="button"
+                            onClick={() =>
+                              tx.player_id
+                                ? openPlayerModal(tx.player_id, tx.player_name, club.abbr)
+                                : openTeamHub(club.abbr)
+                            }
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 hover:border-sky-500/50 transition shrink-0"
+                          >
+                            <TeamLogo abbr={club.abbr} size="xs" className="!w-3.5 !h-3.5" />
+                            <span className="font-stat font-bold text-[10px] text-slate-500 dark:text-slate-400">
+                              {club.abbr}
                             </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                            <span className="font-semibold truncate max-w-[220px]">
+                              {tx.player_name || decodeHtml(tx.headline)}
+                            </span>
+                            {tx.status === 'REPORTED' && (
+                              <span className="font-stat font-extrabold text-[9px] uppercase text-amber-500">
+                                RPT
+                              </span>
+                            )}
+                            {tx.total_value_millions > 0 && (
+                              <span className="font-stat font-bold text-[10px] text-emerald-500">
+                                ${tx.total_value_millions}M
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
               </div>
             </div>
           </div>
@@ -4483,7 +4543,10 @@ export default function App() {
                     Most Active Clubs
                   </span>
                   <button
-                    onClick={() => setActiveTab('leaderboard')}
+                    onClick={() => {
+                      setSpendingMode('offseason');
+                      setActiveTab('leaderboard');
+                    }}
                     className="text-xs font-bold text-sky-500 hover:underline"
                   >
                     View all
@@ -4655,13 +4718,14 @@ export default function App() {
                   <span className="font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                     Showing <strong className="text-slate-800 dark:text-slate-100">{filteredFreeAgents.length}</strong> of {freeAgents.length} {selectedFaClass} free agents
                   </span>
-                  {(faSearch.trim() || faPositionFilter !== 'ALL' || watchlistOnly) && (
+                  {(faSearch.trim() || faPositionFilter !== 'ALL' || watchlistOnly || faSignedFilter !== 'ALL') && (
                     <button
                       type="button"
                       onClick={() => {
                         setFaSearch('');
                         setFaPositionFilter('ALL');
                         setWatchlistOnly(false);
+                        setFaSignedFilter('ALL');
                       }}
                       className="text-[11px] font-extrabold text-rose-500 hover:underline"
                     >
@@ -4680,13 +4744,14 @@ export default function App() {
             ) : filteredFreeAgents.length === 0 ? (
               <div className="text-center py-16 rounded-lg border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
                 <p className="text-sm font-semibold text-slate-500">
-                  No matching unsigned free agents found.
+                  No matching {faSignedFilter === 'SIGNED' ? 'signed' : faSignedFilter === 'UNSIGNED' ? 'unsigned' : ''} free agents found.
                 </p>
                 <button
                   onClick={() => {
                     setWatchlistOnly(false);
                     setFaPositionFilter('ALL');
                     setFaSearch('');
+                    setFaSignedFilter('ALL');
                   }}
                   className="text-xs font-bold text-sky-500 hover:underline"
                 >
@@ -5266,22 +5331,22 @@ export default function App() {
               const additions = transactions.filter(
                 (t) =>
                   t.status !== 'VOIDED' &&
+                  (!majorLeagueOnly || isMajorLeagueMove(t)) &&
                   (t.to_team === hubTeam || t.team_a === hubTeam) &&
                   !isDepartureMove(t)
               );
               const subtractions = transactions.filter(
                 (t) =>
                   t.status !== 'VOIDED' &&
+                  (!majorLeagueOnly || isMajorLeagueMove(t)) &&
                   (t.from_team === hubTeam ||
                     t.team_b === hubTeam ||
                     (t.to_team === hubTeam && isDepartureMove(t)))
               );
 
-              // Compute dynamic 2027 MLB Payroll Rank for this club
-              const sortedPayroll27 = Object.entries(TEAM_PAYROLLS['2027'] || {}).sort(
-                (a, b) => (b[1]?.payroll || 0) - (a[1]?.payroll || 0)
-              );
-              const payrollRank27 = sortedPayroll27.findIndex(([abbr]) => abbr === hubTeam) + 1;
+              // Live official MLB Team Stats & Ranks for this club (zero manual updates)
+              const hubTeamStats = teamStatsData?.teams?.find((t) => t.abbr === hubTeam) || null;
+              const hubStatsSeason = teamStatsData?.season || teamStatsSeason;
 
               const rosterQuery = hubRosterSearch.trim().toLowerCase();
               const matchesRosterSearch = (p) =>
@@ -5323,9 +5388,14 @@ export default function App() {
                             <span className="px-2 py-0.5 rounded-md bg-white/15 backdrop-blur-sm border border-white/15 text-[10px] font-black uppercase tracking-widest">
                               {info.division}
                             </span>
-                            {payrollRank27 > 0 && (
-                              <span className="px-2 py-0.5 rounded-md bg-black/30 text-[10px] font-bold tracking-wide text-white/90">
-                                #{payrollRank27} MLB Payroll
+                            {hubTeamStats?.ranks?.power > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-black/30 text-[10px] font-bold tracking-wide text-white/90 tabular-nums">
+                                #{hubTeamStats.ranks.power} MLB Power Rank
+                              </span>
+                            )}
+                            {hubTeamStats?.ranks?.ops > 0 && hubTeamStats?.ranks?.era > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-black/25 text-[10px] font-semibold tracking-wide text-white/85 tabular-nums">
+                                #{hubTeamStats.ranks.ops} Off • #{hubTeamStats.ranks.era} Pitch
                               </span>
                             )}
                           </div>
@@ -5410,129 +5480,154 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Team Roster Price & Payroll Breakdown */}
+                  {/* Live MLB Team Season Stats & League Ranks */}
                   {(() => {
-                    const history = getTeamPayrollHistory(hubTeam);
-                    const p27 = TEAM_PAYROLLS['2027']?.[hubTeam] || {};
-                    const p26 = TEAM_PAYROLLS['2026']?.[hubTeam] || {};
                     const liveTeamAdd = spendingLeaderboard.find((r) => r.team.abbr === hubTeam)?.totalMillions || 0;
-                    const cbtDiff27 = p27.cbt ? Number((p27.cbt - CBT_THRESHOLDS['2027']).toFixed(1)) : null;
-                    const maxHistPayroll = Math.max(1, ...history.map((h) => Number(h.payroll || 0)));
+                    const rankBarColor = (rank) => {
+                      if (!rank) return '#64748b';
+                      if (rank <= 7) return '#10b981';
+                      if (rank <= 15) return '#0ea5e9';
+                      if (rank <= 23) return '#f59e0b';
+                      return '#f43f5e';
+                    };
+                    const rankBarWidth = (rank) => {
+                      if (!rank) return 10;
+                      return Math.max(8, Math.round(((31 - rank) / 30) * 100));
+                    };
 
                     return (
                       <div className="p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h4 className="font-extrabold text-base flex items-center gap-2">
-                              <DollarSign className="w-4 h-4 text-emerald-500" />
-                              <span>{info.short} Roster Payroll &amp; Luxury Tax</span>
+                              <BarChart3 className="w-4 h-4 text-sky-500" />
+                              <span>{info.short} Team Stats &amp; MLB Ranks ({hubStatsSeason})</span>
                             </h4>
                             <p className="text-xs text-slate-500">
-                              Projected 2027 roster price, contract mix &amp; 4-year payroll trajectory
+                              Live official MLB Stats API offense, pitching, defense &amp; run differential rankings
                             </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            {payrollRank27 > 0 && (
-                              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 tabular-nums">
-                                #{payrollRank27} of 30 MLB
+                            {liveTeamAdd > 0 && (
+                              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-500 tabular-nums">
+                                +${liveTeamAdd.toFixed(1)}M Offseason Deals
                               </span>
                             )}
-                            {cbtDiff27 !== null && (
-                              <span
-                                className={`px-2.5 py-1 rounded-full text-xs font-extrabold tabular-nums ${
-                                  cbtDiff27 > 0
-                                    ? 'bg-rose-500/15 text-rose-500'
-                                    : 'bg-emerald-500/15 text-emerald-500'
-                                }`}
-                              >
-                                {cbtDiff27 > 0
-                                  ? `+$${cbtDiff27}M Over $${CBT_THRESHOLDS['2027']}M CBT`
-                                  : `$${Math.abs(cbtDiff27)}M Under $${CBT_THRESHOLDS['2027']}M CBT`}
-                              </span>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSpendingMode('teamStats');
+                                setActiveTab('leaderboard');
+                              }}
+                              className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-slate-100 dark:bg-slate-800 hover:bg-sky-500/15 hover:text-sky-500 text-slate-600 dark:text-slate-300 transition"
+                            >
+                              All 30 Teams →
+                            </button>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                            <div className="text-[11px] font-bold text-slate-400">2027 Payroll Proj</div>
-                            <div className="text-xl font-black text-emerald-500 tabular-nums mt-0.5">${p27.payroll ?? '—'}M</div>
-                            {liveTeamAdd > 0 ? (
-                              <div className="text-[10px] font-bold text-sky-500 mt-0.5 tabular-nums">+${liveTeamAdd.toFixed(1)}M tracked</div>
-                            ) : (
-                              <div className="text-[10px] text-slate-500 mt-0.5">Active 40-Man Proj</div>
-                            )}
-                          </div>
-                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                            <div className="text-[11px] font-bold text-slate-400">2027 Luxury Tax</div>
-                            <div className="text-xl font-black tabular-nums mt-0.5">${p27.cbt ?? '—'}M</div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">CBT / AAV Basis</div>
-                          </div>
-                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                            <div className="text-[11px] font-bold text-slate-400">2026 Roster Price</div>
-                            <div className="text-xl font-black tabular-nums mt-0.5">${p26.payroll ?? '—'}M</div>
-                            <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">2025: ${TEAM_PAYROLLS['2025']?.[hubTeam]?.payroll ?? '—'}M</div>
-                          </div>
-                          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                            <div className="text-[11px] font-bold text-slate-400">2028–30 Committed</div>
-                            <div className="text-sm font-black mt-1 tabular-nums">
-                              ${p27.y2028 ?? 0}M / ${p27.y2029 ?? 0}M / ${p27.y2030 ?? 0}M
-                            </div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">’28 / ’29 / ’30</div>
-                          </div>
-                        </div>
+                        {loadingTeamStats && !hubTeamStats ? (
+                          <BaseballLoader label={`Loading ${hubStatsSeason} ${info.short} team stats`} compact />
+                        ) : !hubTeamStats ? (
+                          <p className="text-xs text-slate-400">Live team stats unavailable right now.</p>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                  <span>Team OPS</span>
+                                  <span className="text-sky-500 tabular-nums">#{hubTeamStats.ranks.ops}</span>
+                                </div>
+                                <div className="text-xl font-black tabular-nums mt-0.5">
+                                  {hubTeamStats.hitting.ops.toFixed(3).replace(/^0/, '')}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                  {hubTeamStats.hitting.runsPerGame.toFixed(2)} R/G • {hubTeamStats.hitting.homeRuns} HR
+                                </div>
+                              </div>
 
-                        {p27.guarPct !== undefined && (
-                          <div className="space-y-1.5">
-                            <div className="flex flex-wrap items-center justify-between text-[11px] font-bold text-slate-500">
-                              <span>2027 Payroll Allocation</span>
-                              <div className="flex items-center gap-3 tabular-nums">
-                                <span className="inline-flex items-center gap-1 text-sky-500">
-                                  <span className="w-2 h-2 rounded-full bg-sky-500" /> Guaranteed {p27.guarPct}%
-                                </span>
-                                <span className="inline-flex items-center gap-1 text-amber-500">
-                                  <span className="w-2 h-2 rounded-full bg-amber-500" /> Arb {p27.arbPct}%
-                                </span>
-                                <span className="inline-flex items-center gap-1 text-emerald-500">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> Pre-Arb {p27.preArbPct}%
-                                </span>
+                              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                  <span>Team ERA</span>
+                                  <span className="text-emerald-500 tabular-nums">#{hubTeamStats.ranks.era}</span>
+                                </div>
+                                <div className="text-xl font-black tabular-nums mt-0.5">
+                                  {hubTeamStats.pitching.era.toFixed(2)}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                  {hubTeamStats.pitching.whip.toFixed(2)} WHIP • {hubTeamStats.pitching.kPer9.toFixed(1)} K/9
+                                </div>
+                              </div>
+
+                              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                  <span>Run Diff</span>
+                                  <span className="text-amber-500 tabular-nums">#{hubTeamStats.ranks.runDiff}</span>
+                                </div>
+                                <div
+                                  className={`text-xl font-black tabular-nums mt-0.5 ${
+                                    hubTeamStats.record.runDiff > 0
+                                      ? 'text-emerald-500'
+                                      : hubTeamStats.record.runDiff < 0
+                                      ? 'text-rose-500'
+                                      : ''
+                                  }`}
+                                >
+                                  {hubTeamStats.record.runDiff > 0
+                                    ? `+${hubTeamStats.record.runDiff}`
+                                    : hubTeamStats.record.runDiff}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                  Pyth {hubTeamStats.record.pythWinPct.toFixed(3).replace(/^0/, '')} • {hubTeamStats.record.wins}-{hubTeamStats.record.losses}
+                                </div>
+                              </div>
+
+                              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                                <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                  <span>Defense FPCT</span>
+                                  <span className="text-indigo-400 tabular-nums">#{hubTeamStats.ranks.fpct}</span>
+                                </div>
+                                <div className="text-xl font-black tabular-nums mt-0.5">
+                                  {hubTeamStats.fielding.fieldingPct.toFixed(3).replace(/^0/, '')}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                  {hubTeamStats.fielding.errors} E • {hubTeamStats.fielding.doublePlays} DP
+                                </div>
                               </div>
                             </div>
-                            <div className="h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
-                              <div className="h-full bg-sky-500 animate-bar-grow" style={{ width: `${p27.guarPct}%` }} />
-                              <div className="h-full bg-amber-500 animate-bar-grow" style={{ width: `${p27.arbPct}%` }} />
-                              <div className="h-full bg-emerald-500 animate-bar-grow" style={{ width: `${p27.preArbPct}%` }} />
+
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1">
+                              {[
+                                { label: 'OPS', rank: hubTeamStats.ranks.ops, val: hubTeamStats.hitting.ops.toFixed(3).replace(/^0/, '') },
+                                { label: 'Runs', rank: hubTeamStats.ranks.runs, val: `${hubTeamStats.hitting.runs}` },
+                                { label: 'ERA', rank: hubTeamStats.ranks.era, val: hubTeamStats.pitching.era.toFixed(2) },
+                                { label: 'WHIP', rank: hubTeamStats.ranks.whip, val: hubTeamStats.pitching.whip.toFixed(2) },
+                                { label: 'Fielding', rank: hubTeamStats.ranks.fpct, val: hubTeamStats.fielding.fieldingPct.toFixed(3).replace(/^0/, '') },
+                              ].map((metric) => (
+                                <div
+                                  key={metric.label}
+                                  className="px-3 py-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-1.5"
+                                >
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="font-bold text-slate-400">{metric.label}</span>
+                                    <span className="font-black tabular-nums text-slate-600 dark:text-slate-200">
+                                      #{metric.rank} <span className="font-semibold text-slate-400">({metric.val})</span>
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 w-full rounded-full bg-slate-200/80 dark:bg-slate-800 overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full animate-bar-grow"
+                                      style={{
+                                        width: `${rankBarWidth(metric.rank)}%`,
+                                        backgroundColor: rankBarColor(metric.rank),
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          </div>
+                          </>
                         )}
-
-                        {/* 4-Year Visual Payroll Trend Cards */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                          {history.map((h) => {
-                            const barPct = Math.max(12, (Number(h.payroll || 0) / maxHistPayroll) * 100);
-                            return (
-                              <div
-                                key={h.year}
-                                className="px-3 py-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 space-y-1.5"
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[10px] font-bold text-slate-400">
-                                    {h.year === '2027' ? '2027 Proj' : h.year}
-                                  </span>
-                                  <span className="text-xs sm:text-sm font-black tabular-nums">
-                                    ${Number(h.payroll || 0).toFixed(1)}M
-                                  </span>
-                                </div>
-                                <div className="h-1.5 w-full rounded-full bg-slate-200/80 dark:bg-slate-800 overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full animate-bar-grow"
-                                    style={{ width: `${barPct}%`, backgroundColor: info.color }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
                       </div>
                     );
                   })()}
@@ -5729,7 +5824,13 @@ export default function App() {
                               <div className="min-w-0 flex-1">
                                 <div className="font-bold text-xs sm:text-sm leading-snug">{decodeHtml(a.headline)}</div>
                                 <div className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
-                                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 font-bold text-[10px]">
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                                      a.status === 'REPORTED'
+                                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                                        : 'bg-emerald-500/15 text-emerald-500'
+                                    }`}
+                                  >
                                     {a.status}
                                   </span>
                                   <span>•</span>
@@ -5792,39 +5893,84 @@ export default function App() {
           </div>
         )}
 
-        {/* Payroll & Spending Hub (Multi-Year Roster Payrolls + Offseason Activity) */}
+        {/* Live Team Stats & Power Rankings Hub (+ Live Offseason Activity) */}
         {activeTab === 'leaderboard' && (() => {
-          const threshold = CBT_THRESHOLDS[payrollYear] || 244;
-          const prevYear = String(Number(payrollYear) - 1);
+          const allStatsTeams = teamStatsData?.teams || [];
+          const displaySeason = teamStatsData?.season || teamStatsSeason;
+          const leagueAvg = teamStatsData?.leagueAvg || null;
+          const leaders = teamStatsData?.leaders || {};
 
-          const payrollRows = MLB_TEAMS.map((t) => {
-            const cur = TEAM_PAYROLLS[payrollYear]?.[t.abbr] || { payroll: 0 };
-            const prev = TEAM_PAYROLLS[prevYear]?.[t.abbr] || null;
-            const liveTracked = spendingLeaderboard.find((r) => r.team.abbr === t.abbr);
-            const yoy = prev ? Number((cur.payroll - prev.payroll).toFixed(1)) : null;
-            const taxBasis = cur.cbt ?? cur.payroll;
-            const overTax = taxBasis > threshold;
-            return {
-              team: t,
-              payroll: cur.payroll || 0,
-              cbt: cur.cbt ?? null,
-              guarPct: cur.guarPct ?? null,
-              arbPct: cur.arbPct ?? null,
-              preArbPct: cur.preArbPct ?? null,
-              y2028: cur.y2028 ?? null,
-              y2029: cur.y2029 ?? null,
-              y2030: cur.y2030 ?? null,
-              yoy,
-              overTax,
-              liveDealsMillions: liveTracked?.totalMillions || 0,
-              liveMoves: liveTracked?.totalMoves || 0,
-            };
-          }).sort((a, b) => b.payroll - a.payroll);
+          const getSortValue = (t, key) => {
+            switch (key) {
+              case 'powerRank': return t.ranks?.power ?? 99;
+              case 'winPct': return t.record?.winPct ?? 0;
+              case 'wins': return t.record?.wins ?? 0;
+              case 'runDiff': return t.record?.runDiff ?? 0;
+              case 'pythWinPct': return t.record?.pythWinPct ?? 0;
+              case 'runsPerGame': return t.hitting?.runsPerGame ?? 0;
+              case 'runs': return t.hitting?.runs ?? 0;
+              case 'hits': return t.hitting?.hits ?? 0;
+              case 'homeRuns': return t.hitting?.homeRuns ?? 0;
+              case 'stolenBases': return t.hitting?.stolenBases ?? 0;
+              case 'avg': return t.hitting?.avg ?? 0;
+              case 'obp': return t.hitting?.obp ?? 0;
+              case 'slg': return t.hitting?.slg ?? 0;
+              case 'ops': return t.hitting?.ops ?? 0;
+              case 'era': return t.pitching?.era ?? 99;
+              case 'whip': return t.pitching?.whip ?? 99;
+              case 'kPer9': return t.pitching?.kPer9 ?? 0;
+              case 'bbPer9': return t.pitching?.bbPer9 ?? 99;
+              case 'pitchSo': return t.pitching?.strikeOuts ?? 0;
+              case 'saves': return t.pitching?.saves ?? 0;
+              case 'avgAgainst': return t.pitching?.avgAgainst ?? 1;
+              case 'runsAllowedPerGame': return t.pitching?.runsAllowedPerGame ?? 99;
+              case 'fieldingPct': return t.fielding?.fieldingPct ?? 0;
+              case 'errors': return t.fielding?.errors ?? 999;
+              case 'doublePlays': return t.fielding?.doublePlays ?? 0;
+              case 'assists': return t.fielding?.assists ?? 0;
+              case 'putOuts': return t.fielding?.putOuts ?? 0;
+              default: return t.ranks?.power ?? 99;
+            }
+          };
 
-          const leaguePayrollTotal = payrollRows.reduce((s, r) => s + r.payroll, 0);
-          const leaguePayrollAvg = leaguePayrollTotal / 30;
-          const overTaxCount = payrollRows.filter((r) => r.overTax).length;
-          const maxPayroll = Math.max(1, ...payrollRows.map((r) => r.payroll));
+          const filteredTeamStats = allStatsTeams
+            .filter((t) => {
+              if (teamStatsLeague !== 'ALL' && t.league !== teamStatsLeague) return false;
+              if (teamStatsSearch.trim()) {
+                const q = teamStatsSearch.trim().toLowerCase();
+                const info = getTeamInfo(t.abbr);
+                const hay = `${t.name} ${t.abbr} ${info.name} ${info.short} ${t.division}`.toLowerCase();
+                if (!hay.includes(q)) return false;
+              }
+              return true;
+            })
+            .sort((a, b) => {
+              const va = getSortValue(a, teamStatsSort.key);
+              const vb = getSortValue(b, teamStatsSort.key);
+              if (va !== vb) return teamStatsSort.dir === 'asc' ? va - vb : vb - va;
+              return (a.ranks?.power ?? 99) - (b.ranks?.power ?? 99);
+            });
+
+          const fmt3 = (n) => Number(n || 0).toFixed(3).replace(/^0/, '');
+          const fmt2 = (n) => Number(n || 0).toFixed(2);
+
+          const renderSortHeader = (label, key, defaultDir = 'desc', align = 'right') => {
+            const active = teamStatsSort.key === key;
+            return (
+              <th
+                key={key}
+                className={`py-2.5 px-2.5 text-[11px] font-extrabold uppercase tracking-wider whitespace-nowrap select-none cursor-pointer transition ${
+                  align === 'left' ? 'text-left' : 'text-right'
+                } ${active ? 'text-sky-500' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+                onClick={() => toggleTeamStatsSort(key, defaultDir)}
+              >
+                <span className="inline-flex items-center gap-0.5">
+                  <span>{label}</span>
+                  {active && <span className="text-[10px]">{teamStatsSort.dir === 'asc' ? '▲' : '▼'}</span>}
+                </span>
+              </th>
+            );
+          };
 
           const activeOffseasonRows =
             spendingApiData?.teams?.length > 0
@@ -5837,23 +5983,23 @@ export default function App() {
                 }))
               : spendingLeaderboard;
           const displaySpent = spendingApiData ? spendingApiData.totalSpent : leagueStats.totalSpent;
-          const displayMoves = spendingApiData ? spendingApiData.totalMoves : transactions.length;
+          const displayMoves = spendingApiData ? spendingApiData.totalMoves : leagueStats.totalMlbMoves;
           const topClub = [...activeOffseasonRows].sort((a, b) => b.totalMoves - a.totalMoves)[0];
           const cycleMaxSpend = Math.max(1, ...activeOffseasonRows.map((r) => r.totalMillions));
 
           return (
             <div className="space-y-4">
-              {/* Top Mode & Year Switcher */}
+              {/* Top Mode & Season Switcher */}
               <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-extrabold">
-                    {spendingMode === 'payroll'
-                      ? `${payrollYear === '2027' ? '2027 Projected' : payrollYear} MLB Team Roster Payrolls`
+                    {spendingMode === 'teamStats'
+                      ? `${displaySeason} MLB Team Stats & Power Rankings`
                       : `Offseason Deals & Activity (${spendingCycle})`}
                   </h2>
                   <p className="text-xs text-slate-500">
-                    {spendingMode === 'payroll'
-                      ? PAYROLL_SOURCES[payrollYear]
+                    {spendingMode === 'teamStats'
+                      ? `Official MLB Stats API 30-team offense, pitching, defense & run differential • Click any column to sort or any club for Team Hub`
                       : (spendingApiData?.dataSource || 'Sorted by disclosed contract dollars, then total roster moves')}
                   </p>
                 </div>
@@ -5864,120 +6010,412 @@ export default function App() {
                     value={spendingMode}
                     onChange={setSpendingMode}
                     options={[
-                      { id: 'payroll', label: 'Roster Payrolls' },
+                      { id: 'teamStats', label: 'Team Stats' },
                       { id: 'offseason', label: 'Offseason Moves' },
                     ]}
                   />
 
-                  {spendingMode === 'payroll' ? (
-                    <SlidingSegmented
-                      variant="surface"
-                      value={payrollYear}
-                      onChange={setPayrollYear}
-                      options={PAYROLL_YEARS.map((yr) => ({ id: yr, label: yr === '2027' ? '2027 Proj' : yr }))}
+                  {spendingMode === 'teamStats' ? (
+                    <YearPicker
+                      value={teamStatsSeason}
+                      years={ALL_SEASON_YEARS}
+                      onChange={setTeamStatsSeason}
                     />
                   ) : (
                     <SlidingSegmented
                       variant="surface"
                       value={spendingCycle}
                       onChange={setSpendingCycle}
-                      options={['2026-27', '2025-26', '2024-25', '2023-24'].map((cyc) => ({ id: cyc, label: cyc }))}
+                      options={OFFSEASON_CYCLES.map((cyc) => ({ id: cyc, label: cyc }))}
                     />
                   )}
                 </div>
               </div>
 
-              {spendingMode === 'payroll' ? (
+              {spendingMode === 'teamStats' ? (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
-                        <DollarSign className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-xl font-black">${(leaguePayrollTotal / 1000).toFixed(2)}B</div>
-                        <div className="text-xs text-slate-500">Total MLB Payroll ({payrollYear})</div>
-                      </div>
-                    </div>
-                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
-                        <Activity className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-xl font-black">${leaguePayrollAvg.toFixed(1)}M</div>
-                        <div className="text-xs text-slate-500">Average Club Roster Price</div>
-                      </div>
-                    </div>
-                    <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-rose-500/15 text-rose-500 flex items-center justify-center">
-                        <Trophy className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-xl font-black">{overTaxCount} Clubs</div>
-                        <div className="text-xs text-slate-500">Above ${threshold}M Luxury Tax Line</div>
+                  {/* Category, League & Team Search Controls */}
+                  <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+                    <SlidingSegmented
+                      variant="underline"
+                      value={teamStatsGroup}
+                      onChange={switchTeamStatsGroup}
+                      options={[
+                        { id: 'overview', label: 'Power & Overview' },
+                        { id: 'hitting', label: 'Offense' },
+                        { id: 'pitching', label: 'Pitching' },
+                        { id: 'fielding', label: 'Defense' },
+                      ]}
+                    />
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SlidingSegmented
+                        variant="surface"
+                        value={teamStatsLeague}
+                        onChange={setTeamStatsLeague}
+                        buttonClassName="!px-2.5 !text-[11px]"
+                        options={[
+                          { id: 'ALL', label: 'All MLB' },
+                          { id: 'AL', label: 'AL' },
+                          { id: 'NL', label: 'NL' },
+                        ]}
+                      />
+                      <div className="relative min-w-[170px]">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={teamStatsSearch}
+                          onChange={(e) => setTeamStatsSearch(e.target.value)}
+                          placeholder="Filter team..."
+                          className="w-full pl-8 pr-7 py-1.5 rounded-lg text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                        />
+                        {teamStatsSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setTeamStatsSearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:gap-px bg-slate-100 dark:bg-slate-800">
-                      {payrollRows.map((row, idx) => {
-                        const pct = Math.max(8, (row.payroll / maxPayroll) * 100);
-                        return (
-                          <div
-                            key={row.team.abbr}
-                            onClick={() => openTeamHub(row.team.abbr)}
-                            className="px-4 py-3.5 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition space-y-2"
+                  {/* Dynamic League Summary Tiles */}
+                  {leagueAvg && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                      {teamStatsGroup === 'overview' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => leaders.bestRunDiff && openTeamHub(leaders.bestRunDiff.abbr)}
+                            className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/40 transition flex items-center gap-3 text-left"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <span className="w-6 text-xs font-black text-slate-400 shrink-0 tabular-nums">#{idx + 1}</span>
-                                <span className="w-8 h-8 rounded-lg bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-1 shrink-0">
-                                  <TeamLogo abbr={row.team.abbr} size="sm" />
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-sm truncate flex items-center gap-1.5">
-                                    <span>{row.team.name}</span>
-                                    {row.overTax && (
-                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-rose-500/15 text-rose-500 shrink-0">
-                                        Over CBT
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
-                                    {row.cbt !== null && <span>CBT: ${row.cbt.toFixed(1)}M</span>}
-                                    {row.yoy !== null && (
-                                      <span className={row.yoy >= 0 ? 'text-emerald-500 font-semibold' : 'text-rose-400 font-semibold'}>
-                                        {row.yoy >= 0 ? `+$${row.yoy}M` : `-$${Math.abs(row.yoy)}M`} vs {prevYear}
-                                      </span>
-                                    )}
-                                    {payrollYear === '2027' && row.guarPct !== null && (
-                                      <span>• {row.guarPct}% Guar / {row.arbPct}% Arb</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="text-right shrink-0">
-                                <div className="font-black text-sm sm:text-base">${row.payroll.toFixed(1)}M</div>
-                                {payrollYear === '2027' && row.liveDealsMillions > 0 && (
-                                  <div className="text-[10px] font-bold text-sky-500">
-                                    +${row.liveDealsMillions.toFixed(1)}M new
-                                  </div>
-                                )}
-                              </div>
+                            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
+                              {leaders.bestRunDiff ? <TeamLogo abbr={leaders.bestRunDiff.abbr} size="sm" /> : <Trophy className="w-5 h-5" />}
                             </div>
+                            <div className="min-w-0">
+                              <div className="text-lg font-black tabular-nums truncate">
+                                {leaders.bestRunDiff ? `${getTeamInfo(leaders.bestRunDiff.abbr).short} (${leaders.bestRunDiff.runDiff > 0 ? `+${leaders.bestRunDiff.runDiff}` : leaders.bestRunDiff.runDiff})` : '—'}
+                              </div>
+                              <div className="text-xs text-slate-500">Best Run Differential ({displaySeason})</div>
+                            </div>
+                          </button>
 
-                            <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                              <div
-                                className="h-full rounded-full"
-                                style={{ width: `${pct}%`, backgroundColor: row.team.color }}
-                              />
+                          <button
+                            type="button"
+                            onClick={() => leaders.topOffense && openTeamHub(leaders.topOffense.abbr)}
+                            className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/40 transition flex items-center gap-3 text-left"
+                          >
+                            <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center shrink-0">
+                              {leaders.topOffense ? <TeamLogo abbr={leaders.topOffense.abbr} size="sm" /> : <Zap className="w-5 h-5" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-lg font-black tabular-nums truncate">
+                                {leaders.topOffense ? `${getTeamInfo(leaders.topOffense.abbr).short} (${fmt3(leaders.topOffense.ops)} OPS)` : '—'}
+                              </div>
+                              <div className="text-xs text-slate-500">Top MLB Offense • Avg {fmt3(leagueAvg.ops)}</div>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => leaders.topPitching && openTeamHub(leaders.topPitching.abbr)}
+                            className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-sky-500/40 transition flex items-center gap-3 text-left"
+                          >
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0">
+                              {leaders.topPitching ? <TeamLogo abbr={leaders.topPitching.abbr} size="sm" /> : <Shield className="w-5 h-5" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-lg font-black tabular-nums truncate">
+                                {leaders.topPitching ? `${getTeamInfo(leaders.topPitching.abbr).short} (${fmt2(leaders.topPitching.era)} ERA)` : '—'}
+                              </div>
+                              <div className="text-xs text-slate-500">Top Pitching Staff • Avg {fmt2(leagueAvg.era)}</div>
+                            </div>
+                          </button>
+                        </>
+                      )}
+
+                      {teamStatsGroup === 'hitting' && (
+                        <>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                              <BarChart3 className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt3(leagueAvg.ops)}</div>
+                              <div className="text-xs text-slate-500">MLB Average OPS ({displaySeason})</div>
                             </div>
                           </div>
-                        );
-                      })}
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                              <Activity className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt2(leagueAvg.runsPerGame)} R/G</div>
+                              <div className="text-xs text-slate-500">League Avg Runs/Game • {fmt3(leagueAvg.avg)} AVG</div>
+                            </div>
+                          </div>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                              <Flame className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{leagueAvg.totalHomeRuns.toLocaleString()} HR</div>
+                              <div className="text-xs text-slate-500">Total MLB Home Runs ({leagueAvg.homeRuns}/team)</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {teamStatsGroup === 'pitching' && (
+                        <>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                              <Shield className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt2(leagueAvg.era)}</div>
+                              <div className="text-xs text-slate-500">MLB Average ERA ({displaySeason})</div>
+                            </div>
+                          </div>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                              <Activity className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt2(leagueAvg.whip)}</div>
+                              <div className="text-xs text-slate-500">MLB Average WHIP</div>
+                            </div>
+                          </div>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                              <Zap className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt2(leagueAvg.kPer9)} K/9</div>
+                              <div className="text-xs text-slate-500">League Avg Strikeouts per 9</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {teamStatsGroup === 'fielding' && (
+                        <>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center">
+                              <Shield className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{fmt3(leagueAvg.fieldingPct)}</div>
+                              <div className="text-xs text-slate-500">MLB Average Fielding % ({displaySeason})</div>
+                            </div>
+                          </div>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                              <Award className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">
+                                {leaders.topDefense ? `${getTeamInfo(leaders.topDefense.abbr).short} (${fmt3(leaders.topDefense.fieldingPct)})` : '—'}
+                              </div>
+                              <div className="text-xs text-slate-500">Top Defensive Club</div>
+                            </div>
+                          </div>
+                          <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center">
+                              <Activity className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xl font-black tabular-nums">{leagueAvg.errors} E</div>
+                              <div className="text-xs text-slate-500">Average Errors per Club</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
+                  )}
+
+                  {/* Sortable 30-Team Stats Table */}
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    {loadingTeamStats ? (
+                      <BaseballLoader label={`Loading ${teamStatsSeason} official MLB team stats`} compact />
+                    ) : filteredTeamStats.length === 0 ? (
+                      <div className="p-10 text-center text-sm text-slate-400">
+                        No MLB team stats matched your filters for {displaySeason}.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs sm:text-sm">
+                          <thead className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+                            <tr>
+                              <th className="py-2.5 pl-4 pr-2 text-left text-[11px] font-extrabold uppercase tracking-wider text-slate-400 w-10">
+                                #
+                              </th>
+                              <th className="py-2.5 px-2 text-left text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                                Team
+                              </th>
+                              {teamStatsGroup === 'overview' && (
+                                <>
+                                  {renderSortHeader('W-L', 'winPct', 'desc')}
+                                  {renderSortHeader('PCT', 'winPct', 'desc')}
+                                  {renderSortHeader('Pyth', 'pythWinPct', 'desc')}
+                                  {renderSortHeader('Diff', 'runDiff', 'desc')}
+                                  {renderSortHeader('R/G', 'runsPerGame', 'desc')}
+                                  {renderSortHeader('OPS', 'ops', 'desc')}
+                                  {renderSortHeader('ERA', 'era', 'asc')}
+                                  {renderSortHeader('WHIP', 'whip', 'asc')}
+                                  {renderSortHeader('FPCT', 'fieldingPct', 'desc')}
+                                </>
+                              )}
+                              {teamStatsGroup === 'hitting' && (
+                                <>
+                                  {renderSortHeader('R', 'runs', 'desc')}
+                                  {renderSortHeader('R/G', 'runsPerGame', 'desc')}
+                                  {renderSortHeader('H', 'hits', 'desc')}
+                                  {renderSortHeader('HR', 'homeRuns', 'desc')}
+                                  {renderSortHeader('SB', 'stolenBases', 'desc')}
+                                  {renderSortHeader('AVG', 'avg', 'desc')}
+                                  {renderSortHeader('OBP', 'obp', 'desc')}
+                                  {renderSortHeader('SLG', 'slg', 'desc')}
+                                  {renderSortHeader('OPS', 'ops', 'desc')}
+                                </>
+                              )}
+                              {teamStatsGroup === 'pitching' && (
+                                <>
+                                  {renderSortHeader('ERA', 'era', 'asc')}
+                                  {renderSortHeader('WHIP', 'whip', 'asc')}
+                                  {renderSortHeader('RA/G', 'runsAllowedPerGame', 'asc')}
+                                  {renderSortHeader('SO', 'pitchSo', 'desc')}
+                                  {renderSortHeader('K/9', 'kPer9', 'desc')}
+                                  {renderSortHeader('BB/9', 'bbPer9', 'asc')}
+                                  {renderSortHeader('BAA', 'avgAgainst', 'asc')}
+                                  {renderSortHeader('SV', 'saves', 'desc')}
+                                </>
+                              )}
+                              {teamStatsGroup === 'fielding' && (
+                                <>
+                                  {renderSortHeader('FPCT', 'fieldingPct', 'desc')}
+                                  {renderSortHeader('E', 'errors', 'asc')}
+                                  {renderSortHeader('DP', 'doublePlays', 'desc')}
+                                  {renderSortHeader('A', 'assists', 'desc')}
+                                  {renderSortHeader('PO', 'putOuts', 'desc')}
+                                </>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                            {filteredTeamStats.map((t, idx) => {
+                              const info = getTeamInfo(t.abbr);
+                              return (
+                                <tr
+                                  key={t.teamId}
+                                  onClick={() => openTeamHub(t.abbr)}
+                                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition"
+                                >
+                                  <td className="py-3 pl-4 pr-2 font-black text-xs text-slate-400 tabular-nums">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="py-3 px-2 whitespace-nowrap">
+                                    <div className="flex items-center gap-2.5">
+                                      <span className="w-7 h-7 rounded-md bg-slate-900/90 dark:bg-slate-950 border border-slate-700/40 flex items-center justify-center p-0.5 shrink-0">
+                                        <TeamLogo abbr={t.abbr} size="xs" />
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div className="font-bold text-xs sm:text-sm leading-tight">
+                                          {info.name}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400">
+                                          {t.division || t.league}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  {teamStatsGroup === 'overview' && (
+                                    <>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums whitespace-nowrap">
+                                        {t.record.wins}-{t.record.losses}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right font-semibold tabular-nums text-slate-500 dark:text-slate-300">
+                                        {fmt3(t.record.winPct)}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500">
+                                        {fmt3(t.record.pythWinPct)}
+                                      </td>
+                                      <td
+                                        className={`py-3 px-2.5 text-right font-extrabold tabular-nums ${
+                                          t.record.runDiff > 0
+                                            ? 'text-emerald-500'
+                                            : t.record.runDiff < 0
+                                            ? 'text-rose-500'
+                                            : 'text-slate-400'
+                                        }`}
+                                      >
+                                        {t.record.runDiff > 0 ? `+${t.record.runDiff}` : t.record.runDiff}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">
+                                        {fmt2(t.hitting.runsPerGame)}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-sky-600 dark:text-sky-400">
+                                        {fmt3(t.hitting.ops)}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                        {fmt2(t.pitching.era)}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">
+                                        {fmt2(t.pitching.whip)}
+                                      </td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500">
+                                        {fmt3(t.fielding.fieldingPct)}
+                                      </td>
+                                    </>
+                                  )}
+
+                                  {teamStatsGroup === 'hitting' && (
+                                    <>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums">{t.hitting.runs}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">{fmt2(t.hitting.runsPerGame)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{t.hitting.hits}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-amber-500">{t.hitting.homeRuns}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">{t.hitting.stolenBases}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{fmt3(t.hitting.avg)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{fmt3(t.hitting.obp)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{fmt3(t.hitting.slg)}</td>
+                                      <td className="py-3 px-2.5 text-right font-extrabold tabular-nums text-sky-600 dark:text-sky-400">{fmt3(t.hitting.ops)}</td>
+                                    </>
+                                  )}
+
+                                  {teamStatsGroup === 'pitching' && (
+                                    <>
+                                      <td className="py-3 px-2.5 text-right font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">{fmt2(t.pitching.era)}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-sky-600 dark:text-sky-400">{fmt2(t.pitching.whip)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">{fmt2(t.pitching.runsAllowedPerGame)}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums">{t.pitching.strikeOuts}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{fmt2(t.pitching.kPer9)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">{fmt2(t.pitching.bbPer9)}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{fmt3(t.pitching.avgAgainst)}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-amber-500">{t.pitching.saves}</td>
+                                    </>
+                                  )}
+
+                                  {teamStatsGroup === 'fielding' && (
+                                    <>
+                                      <td className="py-3 px-2.5 text-right font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">{fmt3(t.fielding.fieldingPct)}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-rose-500">{t.fielding.errors}</td>
+                                      <td className="py-3 px-2.5 text-right font-bold tabular-nums text-sky-600 dark:text-sky-400">{t.fielding.doublePlays}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums">{t.fielding.assists}</td>
+                                      <td className="py-3 px-2.5 text-right tabular-nums text-slate-500 dark:text-slate-300">{t.fielding.putOuts}</td>
+                                    </>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -6077,7 +6515,7 @@ export default function App() {
               Hot Stove Tracker — Free, Unofficial Non-Commercial MLB Fan Dashboard
             </p>
             <p className="leading-relaxed max-w-3xl">
-              Not affiliated with, endorsed by, or sponsored by Major League Baseball, MLB Advanced Media, L.P., or the MLBPA. Statistical data provided via MLB Stats API &amp; Baseball Savant; team payroll estimates compiled from public FanGraphs, Spotrac, and AP reports. All video links open directly on MLB.com.
+              Not affiliated with, endorsed by, or sponsored by Major League Baseball, MLB Advanced Media, L.P., or the MLBPA. Official roster, standings, and statistical data provided via MLB Stats API &amp; Baseball Savant. All video links open directly on MLB.com.
             </p>
           </div>
           <div className="flex flex-col sm:items-end gap-1 shrink-0">
@@ -6105,7 +6543,7 @@ export default function App() {
           { id: 'scoresStandings', label: 'Scores', icon: Calendar },
           { id: 'leaders', label: 'Leaders', icon: Award },
           { id: 'teamHub', label: 'Teams', icon: ArrowLeftRight },
-          { id: 'leaderboard', label: 'Spend', icon: Trophy },
+          { id: 'leaderboard', label: 'Stats', icon: BarChart3 },
         ].map((item) => {
           const Icon = item.icon;
           const active = !selectedPlayer && !compareOpen && !profileOpen && activeTab === item.id;
