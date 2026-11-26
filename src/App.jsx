@@ -4202,10 +4202,21 @@ export default function App() {
                         ? 'CALL-UP / OPTION'
                         : effType.replace('_', ' ');
 
+                    const isReportedArticleCard = tx.status === 'REPORTED' && Boolean(tx.source_url);
                     return (
                       <article
                         key={tx.id}
-                        className="relative overflow-hidden p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition"
+                        onClick={
+                          isReportedArticleCard
+                            ? (e) => {
+                                if (e.target.closest('a, button')) return;
+                                window.open(tx.source_url, '_blank', 'noopener,noreferrer');
+                              }
+                            : undefined
+                        }
+                        className={`relative overflow-hidden p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition ${
+                          isReportedArticleCard ? 'cursor-pointer hover:border-sky-500/40' : ''
+                        }`}
                       >
                         <div
                           className="absolute left-0 top-0 bottom-0 w-1"
@@ -4397,9 +4408,12 @@ export default function App() {
                               <div className="flex items-start sm:items-center gap-3.5">
                                 <button
                                   type="button"
-                                  onClick={() => openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (tx.player_id) openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr);
+                                  }}
                                   className={tx.player_id ? 'cursor-pointer hover:scale-105 transition' : 'cursor-default'}
-                                  title={tx.player_id ? 'View year-by-year stats' : undefined}
+                                  title={tx.player_id ? 'View player profile & stats' : undefined}
                                 >
                                   <PlayerAvatar
                                     playerId={tx.player_id}
@@ -4418,14 +4432,28 @@ export default function App() {
                                     >
                                       {destTeam.abbr}
                                     </button>
-                                    <h2
-                                      onClick={() => tx.player_id && openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
-                                      className={`font-bold text-sm sm:text-base leading-snug ${
-                                        tx.player_id ? 'cursor-pointer hover:text-sky-500 transition' : ''
-                                      }`}
-                                    >
-                                      {cleanHeadline}
-                                    </h2>
+                                    {isReportedArticleCard ? (
+                                      <a
+                                        href={tx.source_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="font-bold text-sm sm:text-base leading-snug hover:text-sky-500 transition inline-flex items-center gap-1.5"
+                                        title={`Read article on ${tx.source_name || 'source'}`}
+                                      >
+                                        <span>{cleanHeadline}</span>
+                                        <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-60" />
+                                      </a>
+                                    ) : (
+                                      <h2
+                                        onClick={() => tx.player_id && openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr)}
+                                        className={`font-bold text-sm sm:text-base leading-snug ${
+                                          tx.player_id ? 'cursor-pointer hover:text-sky-500 transition' : ''
+                                        }`}
+                                      >
+                                        {cleanHeadline}
+                                      </h2>
+                                    )}
                                   </div>
                                   {(tx.position || tx.stat_line || cleanNotes || tx.player_id) && (
                                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
