@@ -519,7 +519,7 @@ function SlidingSegmented({
       pill: 'bg-red-600 dark:bg-red-500 rounded-t-sm',
       activeText: 'text-slate-950 dark:text-white',
       idleText: 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200',
-      btn: 'px-2.5 xl:px-3 py-2 text-xs xl:text-[13px] font-semibold whitespace-nowrap tabular-nums',
+      btn: 'px-2 xl:px-3 py-2 text-xs xl:text-[13px] font-semibold whitespace-nowrap tabular-nums',
       insetY: 'bottom-0 h-[2px]',
     },
     surface: {
@@ -731,7 +731,7 @@ function TeamDropdown({ value, onChange }) {
           setOpen((o) => !o);
           setQuery('');
         }}
-        className={`inline-flex items-center justify-between gap-3 min-w-[235px] px-3 py-2 rounded-lg text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition ${
+        className={`inline-flex items-center justify-between gap-3 w-full sm:w-auto sm:min-w-[215px] px-3 py-2 rounded-lg text-sm font-bold border bg-slate-50 dark:bg-slate-950 transition ${
           open
             ? 'border-sky-500 ring-2 ring-sky-500/20'
             : 'border-slate-200 dark:border-slate-800 hover:border-sky-500/60'
@@ -747,7 +747,7 @@ function TeamDropdown({ value, onChange }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-hidden animate-pop-in">
+        <div className="absolute right-0 top-full mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-hidden animate-pop-in">
           <div className="p-2.5 border-b border-slate-100 dark:border-slate-800">
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2284,17 +2284,16 @@ export default function App() {
   return (
     <div className="min-h-screen pb-20 md:pb-12 bg-[#f4f4f2] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 shrink-0">
-            <BrandLogo className="w-9 h-9" />
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-extrabold tracking-tight text-base sm:text-lg">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
+            <BrandLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-extrabold tracking-tight text-sm sm:text-base xl:text-lg whitespace-nowrap">
                   HOT STOVE TRACKER
                 </h1>
-
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden 2xl:block whitespace-nowrap">
                 Year-Round MLB Dashboard • Synced: {formatMinutesAgo(lastSyncedAt)}
               </p>
             </div>
@@ -2303,7 +2302,7 @@ export default function App() {
           <SlidingSegmented
             asNav
             variant="nav"
-            className="hidden lg:inline-flex h-14"
+            className="hidden lg:inline-flex h-14 min-w-0 max-w-full overflow-x-auto no-scrollbar"
             value={activeTab}
             hiddenIndicator={Boolean(selectedPlayer || compareOpen || profileOpen)}
             onChange={switchMainTab}
@@ -2317,10 +2316,10 @@ export default function App() {
             ]}
           />
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={openProfileView}
-              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
+              className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
                 profileOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
@@ -2340,7 +2339,7 @@ export default function App() {
 
             <button
               onClick={() => openCompareView(null)}
-              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
+              className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
                 compareOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
@@ -2357,32 +2356,32 @@ export default function App() {
                 setGlobalPlayerQuery('');
                 setGlobalPlayerResults([]);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
+              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
               title="Search any MLB player"
             >
               <Search className="w-3.5 h-3.5 text-sky-500" />
-              <span className="hidden sm:inline">Search Player</span>
-              <kbd className="hidden xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300">/</kbd>
+              <span className="hidden sm:inline">Search</span>
+              <span className="hidden 2xl:inline">Player</span>
+              <kbd className="hidden 2xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300">/</kbd>
             </button>
 
             <button
               onClick={() => handleSyncNow(true)}
               disabled={syncing}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
+              title={syncing ? 'Syncing...' : 'Sync Now'}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
+              <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync Now'}</span>
             </button>
 
             <button
               onClick={() => setDarkMode(!darkMode)}
               aria-label="Toggle Light/Dark Mode"
-              className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              className="p-1.5 sm:p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
             >
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
-
-
           </div>
         </div>
 
@@ -3901,7 +3900,7 @@ export default function App() {
                     </button>
 
                     {teamMenuOpen && (
-                      <div className="absolute right-0 mt-2 w-[430px] p-4 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-40 animate-pop-in space-y-3">
+                      <div className="absolute right-0 mt-2 w-[min(430px,calc(100vw-2rem))] p-4 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-2xl z-40 animate-pop-in space-y-3">
                         <div className="flex items-center justify-between gap-2">
                           <div>
                             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -4405,14 +4404,14 @@ export default function App() {
                             </div>
                           ) : (
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              <div className="flex items-start sm:items-center gap-3.5">
+                              <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (tx.player_id) openPlayerModal(tx.player_id, tx.player_name, destTeam.abbr);
                                   }}
-                                  className={tx.player_id ? 'cursor-pointer hover:scale-105 transition' : 'cursor-default'}
+                                  className={`shrink-0 ${tx.player_id ? 'cursor-pointer hover:scale-105 transition' : 'cursor-default'}`}
                                   title={tx.player_id ? 'View player profile & stats' : undefined}
                                 >
                                   <PlayerAvatar
@@ -4421,7 +4420,7 @@ export default function App() {
                                     teamAbbr={destTeam.abbr}
                                   />
                                 </button>
-                                <div>
+                                <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <button
                                       type="button"

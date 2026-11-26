@@ -23,7 +23,29 @@
     overflow-y: scroll;
     scrollbar-gutter: stable;
     overflow-x: clip;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    font-size: 16px;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Responsive auto-zoom: smoothly scales rem-based Tailwind UI on laptops,
+     Chromebooks, 125%-150% Windows DPI screens, tablets, and compact phones
+     so every nav tab, button, and table fits cleanly without manual zooming. */
+  @media (min-width: 1024px) and (max-width: 1439px) {
+    html {
+      font-size: clamp(12.5px, 1.06vw, 15.5px);
+    }
+  }
+  @media (min-width: 640px) and (max-width: 1023px) {
+    html {
+      font-size: clamp(13.5px, 1.8vw, 15px);
+    }
+  }
+  @media (max-width: 639px) {
+    html {
+      font-size: clamp(13px, 3.6vw, 15px);
+    }
   }
   body {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
