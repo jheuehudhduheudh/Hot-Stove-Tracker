@@ -20,6 +20,37 @@ const DIVISION_NAMES = {
   205: 'NL Central',
 };
 
+function getMlbTodayEasternStr() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}-${m}-${d}`;
+  } catch {
+    // Fallback to UTC-5 offset if Intl timezone data is unavailable
+  }
+  return new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+async function fetchWithTimeout(url, timeoutMs = 4500) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'HotStoveTracker/2.6' },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getDefaultSeason() {
   const now = new Date();
   const year = now.getFullYear();
@@ -29,13 +60,13 @@ function getDefaultSeason() {
 
 async function handleScores(req, res) {
   res.setHeader('Cache-Control', 's-maxage=45, stale-while-revalidate=90');
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getMlbTodayEasternStr();
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query?.date || ''))
     ? String(req.query.date)
     : todayStr;
 
   const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=linescore,decisions,probablePitcher,team`;
-  const r = await fetch(url);
+  const r = await fetchWithTimeout(url, 4500);
   if (!r.ok) return res.status(r.status).json({ error: `MLB schedule API returned ${r.status}` });
   const data = await r.json();
 
@@ -95,14 +126,14 @@ async function handleStandings(req, res) {
     : getDefaultSeason();
 
   const [divRes, wcRes] = await Promise.all([
-    fetch(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason&hydrate=team,division`),
-    fetch(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=wildCard&hydrate=team,division`),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason&hydrate=team,division`, 4500),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=wildCard&hydrate=team,division`, 4500).catch(() => null),
   ]);
 
   if (!divRes.ok) return res.status(divRes.status).json({ error: `MLB standings API returned ${divRes.status}` });
 
   const divData = await divRes.json();
-  const wcData = wcRes.ok ? await wcRes.json() : { records: [] };
+  const wcData = wcRes && wcRes.ok ? await wcRes.json() : { records: [] };
 
   const formatTeamRecord = (rec) => {
     const splits = rec.records?.splitRecords || [];
@@ -158,12 +189,12 @@ async function handleLeaders(req, res) {
   const pitchingCats = 'earnedRunAverage,whip,strikeouts,saves,wins,inningsPitched';
 
   const [hitRes, pitchRes] = await Promise.all([
-    fetch(`https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${hittingCats}&season=${season}&statGroup=hitting&limit=10`),
-    fetch(`https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${pitchingCats}&season=${season}&statGroup=pitching&limit=10`),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${hittingCats}&season=${season}&statGroup=hitting&limit=10`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=${pitchingCats}&season=${season}&statGroup=pitching&limit=10`, 4500).catch(() => null),
   ]);
 
-  const hitData = hitRes.ok ? await hitRes.json() : { leagueLeaders: [] };
-  const pitchData = pitchRes.ok ? await pitchRes.json() : { leagueLeaders: [] };
+  const hitData = hitRes && hitRes.ok ? await hitRes.json() : { leagueLeaders: [] };
+  const pitchData = pitchRes && pitchRes.ok ? await pitchRes.json() : { leagueLeaders: [] };
 
   const CATEGORY_ORDER = {
     battingAverage: 1,
@@ -220,14 +251,14 @@ async function handleRoster(req, res) {
     : getDefaultSeason();
 
   const [activeRes, fortyRes, standingsRes] = await Promise.all([
-    fetch(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active&hydrate=person`),
-    fetch(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&hydrate=person`),
-    fetch(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason`),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active&hydrate=person`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&hydrate=person`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason`, 4500).catch(() => null),
   ]);
 
-  const activeJson = activeRes.ok ? await activeRes.json() : { roster: [] };
-  const fortyJson = fortyRes.ok ? await fortyRes.json() : { roster: [] };
-  const standingsJson = standingsRes.ok ? await standingsRes.json() : { records: [] };
+  const activeJson = activeRes && activeRes.ok ? await activeRes.json() : { roster: [] };
+  const fortyJson = fortyRes && fortyRes.ok ? await fortyRes.json() : { roster: [] };
+  const standingsJson = standingsRes && standingsRes.ok ? await standingsRes.json() : { records: [] };
 
   const activeRaw = activeJson.roster || [];
   const fortyRaw = fortyJson.roster || [];
@@ -404,15 +435,16 @@ async function handleBoxScore(req, res) {
   }
 
   const [boxRes, lineRes, schedRes, pbpRes, contentRes] = await Promise.all([
-    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`),
-    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`).catch(() => null),
-    fetch(`https://statsapi.mlb.com/api/v1/schedule?gamePk=${gamePk}&hydrate=decisions,team,venue`).catch(() => null),
-    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`).catch(() => null),
-    fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/content`).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/schedule?gamePk=${gamePk}&hydrate=decisions,team,venue`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`, 4500).catch(() => null),
+    fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/content`, 4500).catch(() => null),
   ]);
 
-  if (!boxRes.ok) {
-    return res.status(boxRes.status).json({ error: `MLB boxscore API returned ${boxRes.status}` });
+  if (!boxRes || !boxRes.ok) {
+    const st = boxRes?.status || 504;
+    return res.status(st).json({ error: `MLB boxscore API returned ${st}` });
   }
 
   const [boxData, lineData, schedData, pbpData, contentData] = await Promise.all([

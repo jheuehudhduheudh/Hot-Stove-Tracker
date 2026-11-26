@@ -52,51 +52,78 @@ function formatStatLine(person) {
   return '';
 }
 
+function safeNum(val, fallback = 0) {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function safeFloat(val, fallback = 0) {
+  const n = parseFloat(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+async function fetchWithTimeout(url, timeoutMs = 4500) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'HotStoveTracker/2.6' },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getPerformanceScore(person, isCareer = false) {
   const picked = getPreferredStatSplit(person);
   if (!picked) return 0;
   const { group, stat: split } = picked;
 
   if (group === 'hitting') {
-    const ab = Number(split.atBats || 0);
-    const bb = Number(split.baseOnBalls || 0);
-    const pa = Number(split.plateAppearances || (ab + bb));
-    const hr = Number(split.homeRuns || 0);
-    const sb = Number(split.stolenBases || 0);
-    const ops = parseFloat(split.ops || 0);
+    const ab = safeNum(split.atBats, 0);
+    const bb = safeNum(split.baseOnBalls, 0);
+    const pa = safeNum(split.plateAppearances, ab + bb);
+    const hr = safeNum(split.homeRuns, 0);
+    const sb = safeNum(split.stolenBases, 0);
+    const ops = safeFloat(split.ops, 0.65);
 
     if (pa === 0 && ab === 0) return 0;
 
     if (isCareer) {
-      const games = Number(split.gamesPlayed || 0);
+      const games = safeNum(split.gamesPlayed, 0);
       const opsAbove = Math.max(-0.08, ops - 0.69);
-      return (Math.min(games, 1600) * 0.14) + (opsAbove * 750 * Math.min(1, pa / 1500)) + (hr * 0.55) + (sb * 0.25);
+      const raw = (Math.min(games, 1600) * 0.14) + (opsAbove * 750 * Math.min(1, pa / 1500)) + (hr * 0.55) + (sb * 0.25);
+      return Number.isFinite(raw) ? raw : 0;
     }
 
     const opsAbove = Math.max(-0.12, ops - 0.68);
     const paFactor = Math.min(pa, 680) / 550;
     const qualMult = Math.min(1.15, pa / 420);
-    return Math.max(1, (paFactor * 80) + (opsAbove * 1050 * qualMult) + (hr * 2.0) + (sb * 1.0));
+    const raw = Math.max(1, (paFactor * 80) + (opsAbove * 1050 * qualMult) + (hr * 2.0) + (sb * 1.0));
+    return Number.isFinite(raw) ? raw : 0;
   }
 
   if (group === 'pitching') {
-    const ip = parseFloat(split.inningsPitched || 0);
-    const ks = Number(split.strikeOuts || 0);
-    const era = parseFloat(split.era || 6.0);
-    const whip = parseFloat(split.whip || 1.6);
-    const saves = Number(split.saves || 0);
-    const holds = Number(split.holds || 0);
+    const ip = safeFloat(split.inningsPitched, 0);
+    const ks = safeNum(split.strikeOuts, 0);
+    const era = safeFloat(split.era, 6.0);
+    const whip = safeFloat(split.whip, 1.6);
+    const saves = safeNum(split.saves, 0);
+    const holds = safeNum(split.holds, 0);
 
     if (ip <= 0) return 0;
 
     if (isCareer) {
       const eraScore = Math.max(-10, (4.45 - era) * 38) * Math.min(1, ip / 400);
-      return (Math.min(ip, 2000) * 0.14) + (Math.min(ks, 2200) * 0.08) + eraScore + (saves * 0.75) + (holds * 0.25);
+      const raw = (Math.min(ip, 2000) * 0.14) + (Math.min(ks, 2200) * 0.08) + eraScore + (saves * 0.75) + (holds * 0.25);
+      return Number.isFinite(raw) ? raw : 0;
     }
 
     const runsSaved = Math.max(-12, (4.65 - era) * (ip / 9));
     const whipBonus = ip >= 30 ? Math.max(-15, (1.35 - whip) * 65 * Math.min(1, ip / 90)) : 0;
-    return Math.max(1, (ip * 0.80) + (ks * 0.52) + (runsSaved * 4.5) + whipBonus + (saves * 2.1) + (holds * 0.9));
+    const raw = Math.max(1, (ip * 0.80) + (ks * 0.52) + (runsSaved * 4.5) + whipBonus + (saves * 2.1) + (holds * 0.9));
+    return Number.isFinite(raw) ? raw : 0;
   }
 
   return 0;
@@ -136,11 +163,13 @@ export default async function handler(req, res) {
 
   // Fetch Official MLB Offseason Transactions + MLB Free Agents list (for classYear + 1) in parallel
   const [txRes, faApiRes] = await Promise.all([
-    fetch(
-      `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${startDate}&endDate=${endDate}`
+    fetchWithTimeout(
+      `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${startDate}&endDate=${endDate}`,
+      5000
     ).catch(() => null),
-    fetch(
-      `https://statsapi.mlb.com/api/v1/people/freeAgents?season=${classYear + 1}`
+    fetchWithTimeout(
+      `https://statsapi.mlb.com/api/v1/people/freeAgents?season=${classYear + 1}`,
+      4500
     ).catch(() => null),
   ]);
 
@@ -273,8 +302,9 @@ export default async function handler(req, res) {
     chunks.map(async (chunk) => {
       const ids = chunk.map((c) => c.playerId).join(',');
       try {
-        const pRes = await fetch(
-          `https://statsapi.mlb.com/api/v1/people?personIds=${ids}&hydrate=${hydrateParam}`
+        const pRes = await fetchWithTimeout(
+          `https://statsapi.mlb.com/api/v1/people?personIds=${ids}&hydrate=${hydrateParam}`,
+          4000
         );
         if (pRes.ok) {
           const pData = await pRes.json();
@@ -309,7 +339,7 @@ export default async function handler(req, res) {
       signedDate: c.signedDate || '',
       statLine: statLine || `No MLB stats in ${isCareer ? 'career' : classYear}`,
       hasMlbStats: Boolean(statLine),
-      score: Number(score.toFixed(1)),
+      score: Number((Number.isFinite(score) ? score : 0).toFixed(1)),
       tier: assignTier(score, isCareer),
     });
   }
