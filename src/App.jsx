@@ -248,6 +248,13 @@ function formatFeedDateHeading(dateKey) {
   });
 }
 
+function formatSafeCardDate(isoStr) {
+  if (!isoStr) return 'Recent';
+  const dt = new Date(isoStr);
+  if (Number.isNaN(dt.getTime())) return 'Recent';
+  return dt.toLocaleDateString();
+}
+
 const MOVE_TYPE_LABELS = {
   SIGNING: 'Signings',
   TRADE: 'Trades',
@@ -815,12 +822,12 @@ function DatePickerPopover({ value, onChange }) {
   const wrapRef = useRef(null);
 
   const [selY, selM, selD] = String(value || getLocalDateStr()).split('-').map(Number);
-  const [viewYear, setViewYear] = useState(selY || 2026);
+  const [viewYear, setViewYear] = useState(selY || LATEST_MLB_SEASON);
   const [viewMonth, setViewMonth] = useState((selM || 1) - 1);
 
   useEffect(() => {
     if (open) {
-      setViewYear(selY || 2026);
+      setViewYear(selY || LATEST_MLB_SEASON);
       setViewMonth((selM || 1) - 1);
     }
   }, [open, selY, selM]);
@@ -1063,7 +1070,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [freeAgents, setFreeAgents] = useState([]);
   const [sidebarFreeAgents, setSidebarFreeAgents] = useState([]);
-  const [selectedFaClass, setSelectedFaClass] = useState('2026');
+  const [selectedFaClass, setSelectedFaClass] = useState(String(LATEST_OFFSEASON_START));
   const [faStatMode, setFaStatMode] = useState('season');
   const [faSignedFilter, setFaSignedFilter] = useState('UNSIGNED');
   const [loadingFreeAgents, setLoadingFreeAgents] = useState(true);
@@ -1074,6 +1081,12 @@ export default function App() {
   const [globalPlayerQuery, setGlobalPlayerQuery] = useState('');
   const [globalPlayerResults, setGlobalPlayerResults] = useState([]);
   const [searchingPlayers, setSearchingPlayers] = useState(false);
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+
+  // Live Feed QOL state (sort, pinned-only quick filter, 40-card pagination)
+  const [feedSort, setFeedSort] = useState('newest'); // 'newest' | 'biggestDeals'
+  const [pinnedOnlyFeed, setPinnedOnlyFeed] = useState(false);
+  const [visibleFeedCount, setVisibleFeedCount] = useState(40);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -1087,13 +1100,13 @@ export default function App() {
   });
   const [games, setGames] = useState([]);
   const [loadingScores, setLoadingScores] = useState(false);
-  const [standingsSeason, setStandingsSeason] = useState('2026');
+  const [standingsSeason, setStandingsSeason] = useState(String(LATEST_MLB_SEASON));
   const [standingsView, setStandingsView] = useState('divisions');
   const [standingsData, setStandingsData] = useState({ divisions: [], wildCard: [] });
   const [loadingStandings, setLoadingStandings] = useState(false);
 
   // League Leaders state
-  const [leadersSeason, setLeadersSeason] = useState('2026');
+  const [leadersSeason, setLeadersSeason] = useState(String(LATEST_MLB_SEASON));
   const [leadersGroup, setLeadersGroup] = useState('hitting');
   const [leadersData, setLeadersData] = useState({ hitting: [], pitching: [] });
   const [loadingLeaders, setLoadingLeaders] = useState(false);
@@ -1184,8 +1197,8 @@ export default function App() {
   // Full Player Profile sub-tab / group / Savant & Splits year state
   const [profileSubTab, setProfileSubTab] = useState('overview');
   const [profileStatGroup, setProfileStatGroup] = useState('hitting');
-  const [savantYear, setSavantYear] = useState('2026');
-  const [splitsYear, setSplitsYear] = useState('2026');
+  const [savantYear, setSavantYear] = useState(String(LATEST_MLB_SEASON));
+  const [splitsYear, setSplitsYear] = useState(String(LATEST_MLB_SEASON));
   const [loadingSavant, setLoadingSavant] = useState(false);
   const [loadingSplits, setLoadingSplits] = useState(false);
   const profileReqIdRef = useRef(0);
@@ -1198,9 +1211,9 @@ export default function App() {
   }, [comparePlayers]);
   const [loadingCompareSlot, setLoadingCompareSlot] = useState([false, false]);
   const [compareScope, setCompareScope] = useState('career'); // 'career' | 'latest' | 'season'
-  const [compareSeasonYear, setCompareSeasonYear] = useState('2026');
+  const [compareSeasonYear, setCompareSeasonYear] = useState(String(LATEST_MLB_SEASON));
   const [compareStatGroup, setCompareStatGroup] = useState('hitting');
-  const [compareSavantYear, setCompareSavantYear] = useState('2026');
+  const [compareSavantYear, setCompareSavantYear] = useState(String(LATEST_MLB_SEASON));
   const [comparePickSlot, setComparePickSlot] = useState(null); // 0 or 1 when picking/replacing a player
   const [compareSearchQuery, setCompareSearchQuery] = useState('');
   const [compareSearchResults, setCompareSearchResults] = useState([]);
@@ -1453,13 +1466,37 @@ export default function App() {
     if (comparePlayers[1]?.id) loadComparePlayer(1, comparePlayers[1].id, yr);
   };
 
-  const copyShareUrl = () => {
+  const copyShareUrl = async () => {
+    const url = window.location.href;
+    let copied = false;
     try {
-      navigator.clipboard?.writeText(window.location.href);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        copied = false;
+      }
+    }
+    if (copied) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 1800);
-    } catch {
-      // Clipboard blocked
+    } else {
+      setSyncNotice('Could not copy link automatically — copy the URL from your browser address bar.');
     }
   };
 
@@ -1513,7 +1550,7 @@ export default function App() {
         const data = await res.json();
         if (Array.isArray(data?.freeAgents)) {
           setFreeAgents(data.freeAgents);
-          if (String(classParam) === '2026' && modeParam === 'season') {
+          if (String(classParam) === String(LATEST_OFFSEASON_START) && modeParam === 'season') {
             setSidebarFreeAgents(data.freeAgents.filter((f) => !f.isSigned));
           }
         }
@@ -1732,6 +1769,23 @@ export default function App() {
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [teamMenuOpen]);
+
+  // Auto-dismiss sync toast banner cleanly after 5 seconds
+  useEffect(() => {
+    if (!syncNotice) return undefined;
+    const t = setTimeout(() => setSyncNotice(''), 5000);
+    return () => clearTimeout(t);
+  }, [syncNotice]);
+
+  // Reset keyboard highlight in Global Player Search whenever query/results/modal changes
+  useEffect(() => {
+    setSearchActiveIdx(0);
+  }, [globalPlayerQuery, globalPlayerResults.length, playerSearchOpen]);
+
+  // Reset Live Feed pagination chunk when filters or sort change
+  useEffect(() => {
+    setVisibleFeedCount(40);
+  }, [majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, feedSort]);
 
   // Track scroll position for floating Back-to-Top button
   useEffect(() => {
@@ -1972,12 +2026,21 @@ export default function App() {
   };
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((tx) => {
+    const filtered = transactions.filter((tx) => {
       if (majorLeagueOnly && !isMajorLeagueMove(tx)) return false;
       if (statusFilter !== 'ALL' && tx.status !== statusFilter) return false;
 
       const effType = getEffectiveMoveType(tx);
       if (typeFilter !== 'ALL' && effType !== typeFilter) return false;
+
+      if (pinnedOnlyFeed) {
+        if (pinnedPlayerIdSet.size === 0) return false;
+        const primaryPinned = tx.player_id && pinnedPlayerIdSet.has(Number(tx.player_id));
+        const tradeLegPinned = [...(tx.team_a_receives || []), ...(tx.team_b_receives || [])].some(
+          (p) => p?.playerId && pinnedPlayerIdSet.has(Number(p.playerId))
+        );
+        if (!primaryPinned && !tradeLegPinned) return false;
+      }
 
       if (selectedTeams.length > 0) {
         const involved = [tx.to_team, tx.from_team, tx.team_a, tx.team_b].filter(Boolean);
@@ -1994,12 +2057,33 @@ export default function App() {
       }
       return true;
     });
-  }, [transactions, majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery]);
+
+    if (feedSort === 'biggestDeals') {
+      return [...filtered].sort((a, b) => {
+        const valDiff = Number(b.total_value_millions || 0) - Number(a.total_value_millions || 0);
+        if (valDiff !== 0) return valDiff;
+        const yrDiff = Number(b.contract_years || 0) - Number(a.contract_years || 0);
+        if (yrDiff !== 0) return yrDiff;
+        return new Date(b.reported_at || 0).getTime() - new Date(a.reported_at || 0).getTime();
+      });
+    }
+    return filtered;
+  }, [transactions, majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, pinnedPlayerIdSet, feedSort]);
+
+  const visibleTransactions = useMemo(
+    () => filteredTransactions.slice(0, visibleFeedCount),
+    [filteredTransactions, visibleFeedCount]
+  );
 
   const groupedTransactions = useMemo(() => {
+    if (feedSort === 'biggestDeals') {
+      return visibleTransactions.length > 0
+        ? [{ key: 'biggest-deals', label: 'Biggest Contracts First', items: visibleTransactions }]
+        : [];
+    }
     const groups = [];
     const byKey = new Map();
-    for (const tx of filteredTransactions) {
+    for (const tx of visibleTransactions) {
       const key = getFeedDateKey(tx.reported_at);
       let grp = byKey.get(key);
       if (!grp) {
@@ -2010,19 +2094,23 @@ export default function App() {
       grp.items.push(tx);
     }
     return groups;
-  }, [filteredTransactions]);
+  }, [visibleTransactions, feedSort]);
 
   const hasActiveFeedFilters = Boolean(
     searchQuery.trim() ||
     selectedTeams.length > 0 ||
     statusFilter !== 'ALL' ||
     typeFilter !== 'ALL' ||
+    pinnedOnlyFeed ||
+    feedSort !== 'newest' ||
     !majorLeagueOnly
   );
 
   const resetAllFeedFilters = () => {
     setSelectedTeams([]);
     setMyTeamsOnlyActive(false);
+    setPinnedOnlyFeed(false);
+    setFeedSort('newest');
     setStatusFilter('ALL');
     setTypeFilter('ALL');
     setSearchQuery('');
@@ -2460,11 +2548,18 @@ export default function App() {
       </header>
 
       {syncNotice && (
-        <div className="bg-red-500/10 border-b border-red-500/25 px-4 py-2 text-xs font-semibold text-center text-red-700 dark:text-red-300 flex items-center justify-center gap-3">
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-red-500/10 border-b border-red-500/25 px-4 py-2 text-xs font-semibold text-center text-red-700 dark:text-red-300 flex items-center justify-center gap-3 animate-fade-up"
+        >
           <span>{syncNotice}</span>
           <button
+            type="button"
             onClick={() => setSyncNotice('')}
-            className="text-slate-400 hover:text-slate-200"
+            aria-label="Dismiss notice"
+            title="Dismiss"
+            className="p-0.5 rounded hover:bg-red-500/15 text-red-600 dark:text-red-300 transition"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -3881,6 +3976,22 @@ export default function App() {
                     </span>
                   </button>
 
+                  {pinnedPlayers.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPinnedOnlyFeed((p) => !p)}
+                      title="Show only moves involving your pinned players"
+                      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold border transition ${
+                        pinnedOnlyFeed
+                          ? 'bg-red-500/15 border-red-500/40 text-red-600 dark:text-red-400'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 hover:border-red-500/50'
+                      }`}
+                    >
+                      <Pin className={`w-3.5 h-3.5 ${pinnedOnlyFeed ? 'fill-current' : ''}`} />
+                      <span>Pinned ({pinnedPlayers.length})</span>
+                    </button>
+                  )}
+
                   <div ref={teamMenuRef} className="relative hidden md:block">
                     <button
                       type="button"
@@ -4043,16 +4154,27 @@ export default function App() {
                       { id: 'DFA_WAIVER', label: 'DFAs & Waivers' },
                     ]}
                   />
-                  <SlidingSegmented
-                    variant="surface"
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    options={[
-                      { id: 'ALL', label: 'All' },
-                      { id: 'OFFICIAL', label: 'Official' },
-                      { id: 'REPORTED', label: 'Reported' },
-                    ]}
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SlidingSegmented
+                      variant="surface"
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      options={[
+                        { id: 'ALL', label: 'All' },
+                        { id: 'OFFICIAL', label: 'Official' },
+                        { id: 'REPORTED', label: 'Reported' },
+                      ]}
+                    />
+                    <SlidingSegmented
+                      variant="surface"
+                      value={feedSort}
+                      onChange={setFeedSort}
+                      options={[
+                        { id: 'newest', label: 'Newest' },
+                        { id: 'biggestDeals', label: 'Biggest $' },
+                      ]}
+                    />
+                  </div>
                 </div>
 
                 {/* Live Feed Result Counter & Removable Active Filter Chips */}
@@ -4108,6 +4230,28 @@ export default function App() {
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-600 dark:text-sky-300 hover:bg-sky-500/25 transition"
                         >
                           <span>{MOVE_TYPE_LABELS[typeFilter] || typeFilter}</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {pinnedOnlyFeed && (
+                        <button
+                          type="button"
+                          onClick={() => setPinnedOnlyFeed(false)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 hover:bg-red-500/25 transition"
+                        >
+                          <span>Pinned Players Only</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {feedSort === 'biggestDeals' && (
+                        <button
+                          type="button"
+                          onClick={() => setFeedSort('newest')}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 transition"
+                        >
+                          <span>Sorted: Biggest Deals $</span>
                           <X className="w-3 h-3" />
                         </button>
                       )}
@@ -4300,7 +4444,7 @@ export default function App() {
                                 <span>{tx.source_name}</span>
                               )}
                               <span>•</span>
-                              <span>{new Date(tx.reported_at).toLocaleDateString()}</span>
+                              <span>{formatSafeCardDate(tx.reported_at)}</span>
 
                             </div>
                           </div>
@@ -4532,6 +4676,21 @@ export default function App() {
                       </div>
                     </section>
                   ))}
+
+                  {filteredTransactions.length > visibleFeedCount && (
+                    <div className="pt-2 flex flex-col items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleFeedCount((c) => c + 40)}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs sm:text-sm font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-500 hover:text-sky-500 shadow-sm transition"
+                      >
+                        <span>
+                          Load More Moves ({Math.min(40, filteredTransactions.length - visibleFeedCount)} of{' '}
+                          {filteredTransactions.length - visibleFeedCount} remaining)
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -4543,24 +4702,67 @@ export default function App() {
                   <span>Hot Stove Pulse</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTypeFilter('ALL');
+                      setFeedSort('newest');
+                      setMajorLeagueOnly(true);
+                    }}
+                    title="Show all MLB moves"
+                    className={`p-3 rounded-lg text-left bg-slate-50 dark:bg-slate-950 border transition ${
+                      typeFilter === 'ALL' && feedSort === 'newest'
+                        ? 'border-sky-500/40'
+                        : 'border-slate-100 dark:border-slate-800 hover:border-sky-500/40'
+                    }`}
+                  >
                     <div className="text-xl font-black text-sky-500">{leagueStats.totalMlbMoves}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">MLB Moves</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTypeFilter('SIGNING');
+                      setFeedSort('biggestDeals');
+                    }}
+                    title="Sort feed by biggest contract deals"
+                    className={`p-3 rounded-lg text-left bg-slate-50 dark:bg-slate-950 border transition ${
+                      feedSort === 'biggestDeals'
+                        ? 'border-emerald-500/50'
+                        : 'border-slate-100 dark:border-slate-800 hover:border-emerald-500/40'
+                    }`}
+                  >
                     <div className="text-xl font-black text-emerald-500">
                       ${leagueStats.totalSpent.toFixed(1)}M
                     </div>
                     <div className="text-[11px] text-slate-500 font-semibold">Tracked Deals</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTypeFilter((cur) => (cur === 'SIGNING' ? 'ALL' : 'SIGNING'))}
+                    title="Filter feed to Signings"
+                    className={`p-3 rounded-lg text-left bg-slate-50 dark:bg-slate-950 border transition ${
+                      typeFilter === 'SIGNING'
+                        ? 'border-sky-500/50 ring-1 ring-sky-500/20'
+                        : 'border-slate-100 dark:border-slate-800 hover:border-sky-500/40'
+                    }`}
+                  >
                     <div className="text-xl font-black">{leagueStats.totalSignings}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">Signings</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTypeFilter((cur) => (cur === 'TRADE' ? 'ALL' : 'TRADE'))}
+                    title="Filter feed to Trades"
+                    className={`p-3 rounded-lg text-left bg-slate-50 dark:bg-slate-950 border transition ${
+                      typeFilter === 'TRADE'
+                        ? 'border-sky-500/50 ring-1 ring-sky-500/20'
+                        : 'border-slate-100 dark:border-slate-800 hover:border-sky-500/40'
+                    }`}
+                  >
                     <div className="text-xl font-black">{leagueStats.totalTrades}</div>
                     <div className="text-[11px] text-slate-500 font-semibold">Trades</div>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -4665,7 +4867,7 @@ export default function App() {
                     years={FA_CLASS_YEARS}
                     onChange={(yr) => {
                       setSelectedFaClass(yr);
-                      setFaSignedFilter(yr === '2026' ? 'UNSIGNED' : 'ALL');
+                      setFaSignedFilter(String(yr) === String(LATEST_OFFSEASON_START) ? 'UNSIGNED' : 'ALL');
                     }}
                   />
 
@@ -5200,7 +5402,7 @@ export default function App() {
                   <span>MLB League Leaders ({leadersSeason})</span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Official MLB Stats API top-10 leaderboards (2000–2026) • Click any player for full career &amp; Statcast profile
+                  Official MLB Stats API top-10 leaderboards (2000–{LATEST_MLB_SEASON}) • Click any player for full career &amp; Statcast profile
                 </p>
               </div>
 
@@ -6606,6 +6808,25 @@ export default function App() {
                 autoFocus
                 value={globalPlayerQuery}
                 onChange={(e) => setGlobalPlayerQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  const activeList =
+                    globalPlayerQuery.trim().length < 2 ? recentPlayers : globalPlayerResults;
+                  if (!activeList.length) return;
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSearchActiveIdx((idx) => (idx + 1) % activeList.length);
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSearchActiveIdx((idx) => (idx - 1 + activeList.length) % activeList.length);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const picked = activeList[searchActiveIdx] || activeList[0];
+                    if (picked) {
+                      setPlayerSearchOpen(false);
+                      openPlayerModal(picked.id, picked.fullName, resolveActiveTeamAbbr(picked.teamAbbr));
+                    }
+                  }
+                }}
                 placeholder="Search any MLB player (e.g., Shohei Ohtani, Aaron Judge)..."
                 className="w-full bg-transparent text-sm font-semibold focus:outline-none"
               />
@@ -6637,10 +6858,11 @@ export default function App() {
                       </button>
                     </div>
                     <div className="space-y-1">
-                      {recentPlayers.map((rp) => {
+                      {recentPlayers.map((rp, idx) => {
                         const activeAbbr = resolveActiveTeamAbbr(rp.teamAbbr);
                         const rpTeam = activeAbbr ? getTeamInfo(activeAbbr) : null;
                         const isPinned = pinnedPlayerIdSet.has(Number(rp.id));
+                        const isHighlighted = idx === searchActiveIdx;
                         const canPinRecent = isEligibleToPinPlayer({
                           playerId: rp.id,
                           fullName: rp.fullName,
@@ -6649,11 +6871,16 @@ export default function App() {
                         return (
                           <div
                             key={rp.id}
+                            onMouseEnter={() => setSearchActiveIdx(idx)}
                             onClick={() => {
                               setPlayerSearchOpen(false);
                               openPlayerModal(rp.id, rp.fullName, activeAbbr);
                             }}
-                            className="w-full p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 text-left cursor-pointer transition"
+                            className={`w-full p-2 rounded-lg flex items-center justify-between gap-2 text-left cursor-pointer transition ${
+                              isHighlighted
+                                ? 'bg-slate-100 dark:bg-slate-800/90 ring-1 ring-sky-500/30'
+                                : 'hover:bg-slate-100 dark:hover:bg-slate-800/80'
+                            }`}
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <PlayerAvatar playerId={rp.id} playerName={rp.fullName} teamAbbr={activeAbbr} size="sm" />
@@ -6718,10 +6945,11 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {globalPlayerResults.map((p) => {
+                  {globalPlayerResults.map((p, idx) => {
                     const activeAbbr = resolveActiveTeamAbbr(p.teamAbbr);
                     const tInfo = activeAbbr ? getTeamInfo(activeAbbr) : null;
                     const isPinned = pinnedPlayerIdSet.has(Number(p.id));
+                    const isHighlighted = idx === searchActiveIdx;
                     const canPin = isEligibleToPinPlayer({
                       playerId: p.id,
                       fullName: p.fullName,
@@ -6737,11 +6965,16 @@ export default function App() {
                     return (
                       <div
                         key={p.id}
+                        onMouseEnter={() => setSearchActiveIdx(idx)}
                         onClick={() => {
                           setPlayerSearchOpen(false);
                           openPlayerModal(p.id, p.fullName, activeAbbr);
                         }}
-                        className="w-full p-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-3 text-left cursor-pointer transition"
+                        className={`w-full p-2.5 rounded-lg flex items-center justify-between gap-3 text-left cursor-pointer transition ${
+                          isHighlighted
+                            ? 'bg-slate-100 dark:bg-slate-800/90 ring-1 ring-sky-500/30'
+                            : 'hover:bg-slate-100 dark:hover:bg-slate-800/80'
+                        }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <PlayerAvatar
@@ -6818,6 +7051,13 @@ export default function App() {
                   })}
                 </div>
               )}
+            </div>
+            <div className="px-4 py-2 border-t border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 flex items-center justify-between text-[10px] font-semibold text-slate-400">
+              <div className="flex items-center gap-3">
+                <span><kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">↑↓</kbd> Navigate</span>
+                <span><kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">Enter</kbd> Open</span>
+              </div>
+              <span><kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">Esc</kbd> Close</span>
             </div>
           </div>
         </div>
