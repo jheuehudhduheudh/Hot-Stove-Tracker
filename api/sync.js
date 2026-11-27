@@ -272,7 +272,46 @@ function normalizePersonKey(name) {
 }
 
 const NON_DEAL_SENTENCE_RE =
-  /\b(luxury\s+tax|cbt\s+threshold|competitive\s+balance\s+tax|qualifying\s+offer|mlbtr\s+predicted|mlbtr\s+projected|we\s+predicted|we\s+projected|our\s+prediction|predicted\s+a|projected\s+a|projected\s+to\s+earn|arbitration\s+projection|coming\s+off\s+a|previously\s+signed|previous\s+contract|prior\s+contract|previous\s+deal|prior\s+deal|last\s+contract|previously\s+earned|earned\s+\$|made\s+\$|owed\s+\$|final\s+year\s+of|compared\s+to|surpasses|behind\s+only|falls\s+short\s+of|similar\s+to|eclipses|signing\s+bonus\s+pool)\b/i;
+  /\b(luxury\s+tax|cbt\s+threshold|competitive\s+balance\s+tax|qualifying\s+offer|mlbtr\s+(?:predicted|projected|expects?|expected|estimated)|trade\s+rumors\s+(?:predicted|projected|expects?|expected)|we\s+(?:predicted|projected|expect|expected|estimated)|our\s+(?:prediction|projection|contract\s+prediction)|predicted\s+(?:a|to\s+(?:land|sign|get|command|earn))|projected\s+(?:a|contract|to\s+(?:land|sign|get|command|earn))|expected\s+to\s+(?:land|sign|get|receive|command|draw|earn)|expects?\s+[a-z.'-]+\s+to\s+(?:land|sign|get|receive|command|draw|earn)|to\s+land\s+a\b|over\s+the\s+same\s+term|arbitration\s+projection|coming\s+off\s+a|previously\s+signed|previous\s+contract|prior\s+contract|previous\s+deal|prior\s+deal|last\s+contract|previously\s+earned|earned\s+\$|made\s+\$|owed\s+\$|final\s+year\s+of|compared\s+to|for\s+comparison|by\s+comparison|in\s+comparison|market\s+comps?|fellow\s+free\s+agents?|other\s+free\s+agents?|elsewhere\s+on\s+the\s+market|top\s+\d+\s+free\s+agents|earlier\s+this\s+(?:offseason|winter|month|week)|recently\s+signed|also\s+signed|could\s+(?:land|command|fetch|get|draw)\s+a|likely\s+to\s+(?:land|command|fetch|get)\s+a|seeking\s+a|looking\s+for\s+a|asking\s+for\s+a|spotrac|fangraphs\s+crowd|surpasses|behind\s+only|falls\s+short\s+of|similar\s+to|eclipses|signing\s+bonus\s+pool)\b/i;
+
+const TERMS_UNKNOWN_RE =
+  /\b(?:financial\s+)?terms\s+(?:of\s+the\s+(?:deal|contract|agreement|pact)\s+)?(?:are|were|remain|have)?\s*(?:not\s+yet\s+known|not\s+known|not\s+yet\s+disclosed|not\s+disclosed|not\s+yet\s+reported|undisclosed|unknown|aren['’]t\s+(?:yet\s+)?known|haven['’]t\s+been\s+(?:disclosed|reported))\b/i;
+
+function getSubjectLastName(playerName) {
+  const tokens = normalizePersonKey(playerName).split(/\s+/).filter(Boolean);
+  return tokens.length > 0 ? tokens[tokens.length - 1] : '';
+}
+
+function isSentenceOwnedBySubject(sentence, playerName, sentenceIdx) {
+  const s = String(sentence || '');
+  if (!s) return false;
+  if (NON_DEAL_SENTENCE_RE.test(s)) return false;
+
+  const lastName = getSubjectLastName(playerName);
+  const lower = s.toLowerCase();
+
+  // If sentence explicitly mentions the subject player's last name, it's about them
+  if (lastName && lastName.length >= 3 && new RegExp(`\\b${lastName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lower)) {
+    return true;
+  }
+
+  // Opening 3 sentences can refer to the player via pronoun or "the deal / pact / contract / agreement / it's a"
+  const hasDealReference =
+    /\b(the\s+(?:deal|contract|pact|agreement|extension|guarantee)|it['’]s\s+a|it\s+is\s+a|he['’]ll\s+(?:receive|get|earn|make)|he\s+will\s+(?:receive|get|earn|make)|his\s+(?:deal|contract|guarantee|salary)|guarantees?\s+him|pays?\s+him|worth\s+\$|financial\s+terms)\b/i.test(s);
+
+  if (sentenceIdx <= 2 && hasDealReference) return true;
+
+  // Beyond sentence 3, only trust sentences that explicitly name the subject player or clearly continue the deal terms
+  if (sentenceIdx > 2) {
+    // Reject if it clearly names another player landing/signing/getting a deal
+    if (/\b[A-Z][a-z]+\s+(?:signed|agreed|landed|received|got|inked|took|will\s+make|is\s+getting|expects)\b/.test(s)) {
+      return false;
+    }
+    return hasDealReference && sentenceIdx <= 5;
+  }
+
+  return sentenceIdx <= 1;
+}
 
 const EXCLUDED_MONEY_BEFORE_RE =
   /\b(signing\s+bonus(?:\s+of)?|bonus(?:\s+of)?|buyout(?:\s+of)?|(?:club|mutual|player|vesting)\s+option(?:\s+of|\s+worth|\s+for)?|option\s+(?:of|worth|for)|incentives?\s+(?:of|up\s+to)|escalators?\s+(?:of|up\s+to)|deferrals?\s+of|deferred\s+(?:money\s+of)?|even\s+salaries\s+of|annual\s+salar(?:y|ies)\s+of|base\s+salar(?:y|ies)\s+of|salaries\s+of|salary\s+of|avoids?\s+tax|up\s+to|could\s+reach|can\s+reach|max(?:imum)?\s+(?:value\s+of|of)|worth\s+up\s+to|projected\s+(?:at|for|to\s+earn)|predicted\s+(?:at|for)|earned|made|owed)\s*$/i;
@@ -455,34 +494,60 @@ function extractCleanStandaloneMoney(text) {
   return null;
 }
 
-function pickBestContractNote(title, description, bodyText) {
-  const sentences = splitIntoSentences(bodyText.slice(0, 4500));
-  const cleanSentences = sentences
-    .map((s) => s.replace(/^\d{1,2}:\d{2}\s*(?:am|pm)\s*:\s*/i, '').trim())
-    .filter((s) => s.length >= 25 && !NON_DEAL_SENTENCE_RE.test(s));
+function pickBestContractNote(title, description, bodyText, playerName = '') {
+  const sentences = splitIntoSentences(bodyText.slice(0, 4500)).map((s) =>
+    s.replace(/^\d{1,2}:\d{2}\s*(?:am|pm)\s*:\s*/i, '').trim()
+  );
+  const ownedSentences = sentences.filter(
+    (s, idx) => s.length >= 25 && isSentenceOwnedBySubject(s, playerName, idx)
+  );
 
-  // Prefer the sentence that states the paired contract terms (e.g. "five-year, $125MM")
-  const pairedSentence = cleanSentences.find((s) => Boolean(extractPairedDealFromText(s)));
+  // Prefer a subject-owned sentence that states the paired contract terms (e.g. "five-year, $125MM")
+  const pairedSentence = ownedSentences.find((s) => Boolean(extractPairedDealFromText(s)));
   if (pairedSentence) {
     return pairedSentence.length > 180
       ? `${pairedSentence.slice(0, 180).trim()}...`
       : pairedSentence;
   }
 
+  // Otherwise use the first clean opening sentence about this signing
+  if (ownedSentences[0]) {
+    return ownedSentences[0].length > 180
+      ? `${ownedSentences[0].slice(0, 180).trim()}...`
+      : ownedSentences[0];
+  }
+
   const fallback = String(description || bodyText || '')
     .replace(/^\d{1,2}:\d{2}\s*(?:am|pm)\s*:\s*/i, '')
     .trim();
-  if (!fallback) return null;
+  if (!fallback || NON_DEAL_SENTENCE_RE.test(fallback)) return null;
   return fallback.length > 180 ? `${fallback.slice(0, 180).trim()}...` : fallback;
 }
 
-function parseContractDetails(title, bodyText = '') {
+function parseContractDetails(title, bodyText = '', playerName = '') {
   const cleanTitle = String(title || '');
   // Search up to 4,500 chars so MLBTR reverse-chronological timestamped updates don't push the
-  // original "five-year, $125MM deal" paragraph out of view.
-  const sentences = splitIntoSentences(String(bodyText || '').slice(0, 4500));
-  const cleanSentences = sentences.filter((s) => !NON_DEAL_SENTENCE_RE.test(s));
+  // original "five-year, $125MM deal" paragraph out of view, while requiring sentences to belong
+  // to the subject player rather than market comps/projections (e.g. Lowe/Arraez in a Chisholm post).
+  const rawSentences = splitIntoSentences(String(bodyText || '').slice(0, 4500));
+  const cleanSentences = rawSentences.filter((s, idx) =>
+    isSentenceOwnedBySubject(s, playerName, idx)
+  );
   const cleanBody = cleanSentences.join(' ');
+
+  // If the opening lead explicitly states terms aren't known yet and the headline has no deal terms,
+  // avoid scraping unrelated comparison figures from later paragraphs.
+  const leadWindow = rawSentences.slice(0, 3).join(' ');
+  const termsUnknownInLead = TERMS_UNKNOWN_RE.test(leadWindow);
+  if (termsUnknownInLead && !extractPairedDealFromText(cleanTitle)) {
+    const yearsOnly = extractCleanYearsFromText(cleanTitle) ?? extractCleanYearsFromText(leadWindow);
+    return {
+      years: yearsOnly,
+      totalMillions: null,
+      aav: null,
+      confidence: 0,
+    };
+  }
 
   // Tier 4 (Highest confidence): Paired "X-year, $YM" directly in headline
   const titlePaired = extractPairedDealFromText(cleanTitle);
@@ -697,8 +762,8 @@ function parseReportedDealsFromRss(xml, sourceLabel = 'MLB Trade Rumors') {
     const moveType = /\b(extend|extends|extended|extension)\b/i.test(title)
       ? 'EXTENSION'
       : 'SIGNING';
-    const { years, totalMillions, aav, confidence } = parseContractDetails(title, bodyText);
-    const notesSnippet = pickBestContractNote(title, description, bodyText);
+    const { years, totalMillions, aav, confidence } = parseContractDetails(title, bodyText, playerName);
+    const notesSnippet = pickBestContractNote(title, description, bodyText, playerName);
     const isoPub = safeIsoDate(pubDate);
 
     deals.push({
@@ -1528,12 +1593,13 @@ export default async function handler(req, res) {
     {
       const { data: oldReportedRows } = await supabase
         .from('transactions')
-        .select('id, external_id, to_team, player_id, player_name, reported_at, total_value_millions, status')
+        .select('id, external_id, to_team, player_id, player_name, reported_at, total_value_millions, contract_notes, status')
         .eq('status', 'REPORTED')
         .like('external_id', 'mlbtr-deal-%');
 
       const supersededIds = [];
       const cleanupDuplicateIds = [];
+      const resetBogusContractIds = [];
       const voidedIds = [];
       const seenReportedByTeamIdDb = new Map();
 
@@ -1588,7 +1654,31 @@ export default async function handler(req, res) {
           offMatch.reportedAtMs >= repTs - 36 * 60 * 60 * 1000
         ) {
           voidedIds.push(row.id);
+          continue;
         }
+
+        // 5. Self-heal any older row whose saved contract_notes came from a projection/comp sentence
+        // (e.g. "MLBTR expects Lowe to land a three-year, $69MM deal..." attached to another player)
+        if (
+          row.contract_notes &&
+          NON_DEAL_SENTENCE_RE.test(row.contract_notes) &&
+          !freshlyParsedExtIds.has(row.external_id)
+        ) {
+          resetBogusContractIds.push(row.id);
+        }
+      }
+
+      if (resetBogusContractIds.length > 0) {
+        await supabase
+          .from('transactions')
+          .update({
+            contract_years: null,
+            total_value_millions: null,
+            aav_millions: null,
+            contract_notes: null,
+            updated_at: nowIso,
+          })
+          .in('id', resetBogusContractIds);
       }
 
       if (supersededIds.length > 0) {

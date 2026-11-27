@@ -11,12 +11,31 @@ const MLB_TEAM_ID_TO_ABBR = {
 
 const ALL_MLB_TEAM_IDS = Object.keys(MLB_TEAM_ID_TO_ABBR).join(',');
 
-const CYCLES = {
-  '2026-27': { start: '2026-10-01', end: '2027-04-01', live: true },
-  '2025-26': { start: '2025-11-01', end: '2026-03-31', live: false },
-  '2024-25': { start: '2024-11-01', end: '2025-03-31', live: false },
-  '2023-24': { start: '2023-11-01', end: '2024-03-31', live: false },
-};
+function buildDynamicCycles() {
+  const now = new Date();
+  const latestStart = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+  const cycles = {};
+  for (let i = 0; i < 4; i++) {
+    const yr = latestStart - i;
+    const key = `${yr}-${String((yr + 1) % 100).padStart(2, '0')}`;
+    cycles[key] = {
+      start: i === 0 ? `${yr}-10-01` : `${yr}-11-01`,
+      end: i === 0 ? `${yr + 1}-04-01` : `${yr + 1}-03-31`,
+      live: i === 0,
+    };
+  }
+  return { cycles, defaultKey: Object.keys(cycles)[0] };
+}
+
+function normalizePersonKey(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv)\b/g, '')
+    .replace(/[^a-z]+/g, ' ')
+    .trim();
+}
 
 function initTeamMap() {
   const map = {};
@@ -32,14 +51,29 @@ function initTeamMap() {
   return map;
 }
 
+async function fetchWithTimeout(url, timeoutMs = 5000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'HotStoveTracker/2.8' },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1800');
 
-  const cycleKey = String(req.query?.cycle || '2026-27');
-  const cycle = CYCLES[cycleKey] || CYCLES['2026-27'];
+  const { cycles, defaultKey } = buildDynamicCycles();
+  const requested = String(req.query?.cycle || defaultKey);
+  const cycleKey = cycles[requested] ? requested : defaultKey;
+  const cycle = cycles[cycleKey];
   const totals = initTeamMap();
 
-  // 1. Pull any tracked dollar figures & moves from Supabase within this offseason window
+  // 1. Pull tracked MLB dollar figures & moves from Supabase within this offseason window
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   let dbRowsCount = 0;
@@ -49,26 +83,50 @@ export default async function handler(req, res) {
       const supabase = createClient(supabaseUrl, serviceKey);
       const { data } = await supabase
         .from('transactions')
-        .select('status, move_type, to_team, team_a, total_value_millions, reported_at')
+        .select('id, status, is_major_league, move_type, player_name, to_team, team_a, team_b, total_value_millions, reported_at')
         .gte('reported_at', `${cycle.start}T00:00:00Z`)
         .lte('reported_at', `${cycle.end}T23:59:59Z`);
 
       if (Array.isArray(data) && data.length > 0) {
         dbRowsCount = data.length;
+        const maxDealBySigningKey = new Map();
+
         for (const tx of data) {
-          if (tx.status === 'VOIDED') continue;
+          if (tx.status === 'VOIDED' || tx.is_major_league === false) continue;
+
+          if (tx.move_type === 'TRADE') {
+            if (cycle.live) {
+              const clubs = Array.from(new Set([tx.team_a, tx.team_b].filter((c) => c && totals[c])));
+              for (const c of clubs) {
+                totals[c].tradesCount += 1;
+                totals[c].totalMoves += 1;
+              }
+            }
+            continue;
+          }
+
           const teamKey = tx.to_team || tx.team_a;
           if (!teamKey || !totals[teamKey]) continue;
 
           if (cycle.live) {
             totals[teamKey].totalMoves += 1;
-            if (tx.move_type === 'TRADE') totals[teamKey].tradesCount += 1;
             if (tx.move_type === 'SIGNING' || tx.move_type === 'EXTENSION') {
               totals[teamKey].signingsCount += 1;
             }
           }
+
           if (tx.move_type === 'SIGNING' || tx.move_type === 'EXTENSION') {
-            totals[teamKey].totalMillions += Number(tx.total_value_millions || 0);
+            const val = Number(tx.total_value_millions || 0);
+            if (val > 0) {
+              const pKey = tx.player_name
+                ? `${teamKey}:${normalizePersonKey(tx.player_name)}`
+                : `${teamKey}:tx:${tx.id}`;
+              const prev = maxDealBySigningKey.get(pKey) || 0;
+              if (val > prev) {
+                totals[teamKey].totalMillions += val - prev;
+                maxDealBySigningKey.set(pKey, val);
+              }
+            }
           }
         }
       }
@@ -83,7 +141,7 @@ export default async function handler(req, res) {
     dataSource = 'Official MLB Stats API (Move Counts; MLB API does not publish salaries)';
     try {
       const url = `https://statsapi.mlb.com/api/v1/transactions?teamId=${ALL_MLB_TEAM_IDS}&startDate=${cycle.start}&endDate=${cycle.end}`;
-      const r = await fetch(url);
+      const r = await fetchWithTimeout(url, 5000);
       if (r.ok) {
         const json = await r.json();
         const rawTx = json?.transactions || [];
@@ -134,7 +192,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     cycle: cycleKey,
-    availableCycles: Object.keys(CYCLES),
+    availableCycles: Object.keys(cycles),
     isLiveCycle: cycle.live,
     dataSource,
     dbRowsCount,
