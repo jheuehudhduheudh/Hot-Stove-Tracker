@@ -4,7 +4,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, Users, Trophy, Flame,
   X, ShieldAlert, ArrowLeftRight, Database,
   ExternalLink, DollarSign, Activity, Star, BarChart3, Calendar,
-  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale, Pin, User
+  ChevronLeft, ChevronRight, Award, Shield, Bookmark, Play, Share2, Check, ArrowUp, History, ChevronDown, Scale, Pin, User, Copy
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { exportPlayerCardPng, exportCompareCardPng } from './lib/cardExporter';
@@ -253,6 +253,43 @@ function formatSafeCardDate(isoStr) {
   const dt = new Date(isoStr);
   if (Number.isNaN(dt.getTime())) return 'Recent';
   return dt.toLocaleDateString();
+}
+
+function formatRelativeCardTime(isoStr) {
+  if (!isoStr) return 'Recent';
+  const dt = new Date(isoStr);
+  if (Number.isNaN(dt.getTime())) return 'Recent';
+  const diffMs = Date.now() - dt.getTime();
+  // Official MLB date-only rows are anchored at 12:00 UTC; avoid showing "in 3h" for same-day noon-UTC timestamps
+  if (diffMs < 0) return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 2) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatMoneyMillions(val, { prefix = '$' } = {}) {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0) return `${prefix}0`;
+  if (n >= 1000) {
+    const billions = n / 1000;
+    const formatted = Number(billions.toFixed(2));
+    return `${prefix}${formatted}B`;
+  }
+  if (n < 1) {
+    const thousands = Math.round(n * 1000);
+    return `${prefix}${thousands}K`;
+  }
+  const formatted = n >= 100 ? Number(n.toFixed(1)) : Number(n.toFixed(2));
+  return `${prefix}${formatted}M`;
+}
+
+function formatExactMillionsTooltip(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0) return '$0';
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}M`;
 }
 
 const MOVE_TYPE_LABELS = {
@@ -526,7 +563,7 @@ function SlidingSegmented({
       pill: 'bg-red-600 dark:bg-red-500 rounded-t-sm',
       activeText: 'text-slate-950 dark:text-white',
       idleText: 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200',
-      btn: 'px-2 xl:px-3 py-2 text-xs xl:text-[13px] font-semibold whitespace-nowrap tabular-nums',
+      btn: 'px-1.5 xl:px-2.5 py-2 text-[11.5px] xl:text-[13px] font-semibold whitespace-nowrap tabular-nums',
       insetY: 'bottom-0 h-[2px]',
     },
     surface: {
@@ -1083,9 +1120,11 @@ export default function App() {
   const [searchingPlayers, setSearchingPlayers] = useState(false);
   const [searchActiveIdx, setSearchActiveIdx] = useState(0);
 
-  // Live Feed QOL state (sort, pinned-only quick filter, 40-card pagination)
+  // Live Feed QOL state (sort, pinned-only, $10M+ deals filter, copy feedback, 40-card pagination)
   const [feedSort, setFeedSort] = useState('newest'); // 'newest' | 'biggestDeals'
   const [pinnedOnlyFeed, setPinnedOnlyFeed] = useState(false);
+  const [bigDealsOnly, setBigDealsOnly] = useState(false);
+  const [copiedTxId, setCopiedTxId] = useState(null);
   const [visibleFeedCount, setVisibleFeedCount] = useState(40);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -1785,7 +1824,7 @@ export default function App() {
   // Reset Live Feed pagination chunk when filters or sort change
   useEffect(() => {
     setVisibleFeedCount(40);
-  }, [majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, feedSort]);
+  }, [majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, bigDealsOnly, feedSort]);
 
   // Track scroll position for floating Back-to-Top button
   useEffect(() => {
@@ -2033,6 +2072,10 @@ export default function App() {
       const effType = getEffectiveMoveType(tx);
       if (typeFilter !== 'ALL' && effType !== typeFilter) return false;
 
+      if (bigDealsOnly) {
+        if (Number(tx.total_value_millions || 0) < 10) return false;
+      }
+
       if (pinnedOnlyFeed) {
         if (pinnedPlayerIdSet.size === 0) return false;
         const primaryPinned = tx.player_id && pinnedPlayerIdSet.has(Number(tx.player_id));
@@ -2068,7 +2111,7 @@ export default function App() {
       });
     }
     return filtered;
-  }, [transactions, majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, pinnedPlayerIdSet, feedSort]);
+  }, [transactions, majorLeagueOnly, statusFilter, typeFilter, selectedTeams, searchQuery, pinnedOnlyFeed, bigDealsOnly, pinnedPlayerIdSet, feedSort]);
 
   const visibleTransactions = useMemo(
     () => filteredTransactions.slice(0, visibleFeedCount),
@@ -2102,6 +2145,7 @@ export default function App() {
     statusFilter !== 'ALL' ||
     typeFilter !== 'ALL' ||
     pinnedOnlyFeed ||
+    bigDealsOnly ||
     feedSort !== 'newest' ||
     !majorLeagueOnly
   );
@@ -2110,11 +2154,51 @@ export default function App() {
     setSelectedTeams([]);
     setMyTeamsOnlyActive(false);
     setPinnedOnlyFeed(false);
+    setBigDealsOnly(false);
     setFeedSort('newest');
     setStatusFilter('ALL');
     setTypeFilter('ALL');
     setSearchQuery('');
     setMajorLeagueOnly(true);
+  };
+
+  const copyMoveSummary = async (tx, headlineText, clubAbbr, e) => {
+    if (e) e.stopPropagation();
+    const dealBits = [
+      tx.contract_years ? `${tx.contract_years} yr${tx.contract_years > 1 ? 's' : ''}` : null,
+      tx.total_value_millions > 0 ? formatMoneyMillions(tx.total_value_millions) : null,
+    ].filter(Boolean);
+    const dealPart = dealBits.length > 0 ? ` (${dealBits.join(' / ')})` : '';
+    const statusTag = tx.status === 'REPORTED' ? '[Reported] ' : '';
+    const summary = `${statusTag}${clubAbbr ? `${clubAbbr}: ` : ''}${headlineText}${dealPart}`;
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(summary);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = summary;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {
+        copied = false;
+      }
+    }
+    if (copied) {
+      setCopiedTxId(tx.id);
+      setTimeout(() => setCopiedTxId((cur) => (cur === tx.id ? null : cur)), 1600);
+    }
   };
 
   const normalizePlayerNameKey = (name) =>
@@ -2372,25 +2456,23 @@ export default function App() {
   return (
     <div className="min-h-screen pb-20 md:pb-12 bg-[#f4f4f2] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-2 sm:gap-3">
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
-            <BrandLogo className="w-8 h-8 sm:w-9 sm:h-9 shrink-0" />
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h1 className="font-extrabold tracking-tight text-sm sm:text-base xl:text-lg whitespace-nowrap">
-                  HOT STOVE TRACKER
-                </h1>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden 2xl:block whitespace-nowrap">
-                Year-Round MLB Dashboard • Synced: {formatMinutesAgo(lastSyncedAt)}
-              </p>
-            </div>
-          </div>
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => switchMainTab('feed')}
+            className="flex items-center gap-2 min-w-0 shrink-0 text-left hover:opacity-90 transition"
+            title="Hot Stove Tracker — Live Feed"
+          >
+            <BrandLogo className="w-8 h-8 shrink-0" />
+            <h1 className="font-extrabold tracking-tight text-sm sm:text-base whitespace-nowrap">
+              HOT STOVE TRACKER
+            </h1>
+          </button>
 
           <SlidingSegmented
             asNav
             variant="nav"
-            className="hidden lg:inline-flex h-14 min-w-0 max-w-full overflow-x-auto no-scrollbar"
+            className="hidden lg:inline-flex h-14 shrink-0"
             value={activeTab}
             hiddenIndicator={Boolean(selectedPlayer || compareOpen || profileOpen)}
             onChange={switchMainTab}
@@ -2404,10 +2486,10 @@ export default function App() {
             ]}
           />
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={openProfileView}
-              className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
+              className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
                 profileOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
@@ -2415,7 +2497,7 @@ export default function App() {
               title={`Open Profile (${profileDisplayName}) & Pinned Favorite Players`}
             >
               <User className="w-3.5 h-3.5 text-sky-500" />
-              <span className="hidden xl:inline text-xs">
+              <span className="hidden 2xl:inline">
                 {userProfile?.mode === 'authenticated' && userProfile?.username ? userProfile.username : 'Profile'}
               </span>
               {pinnedPlayers.length > 0 && (
@@ -2427,7 +2509,7 @@ export default function App() {
 
             <button
               onClick={() => openCompareView(null)}
-              className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border transition ${
+              className={`inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
                 compareOpen
                   ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-400'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500'
@@ -2435,7 +2517,7 @@ export default function App() {
               title="Compare any two MLB players side-by-side"
             >
               <Scale className="w-3.5 h-3.5 text-sky-500" />
-              <span className="hidden xl:inline">Compare</span>
+              <span className="hidden 2xl:inline">Compare</span>
             </button>
 
             <button
@@ -2444,29 +2526,29 @@ export default function App() {
                 setGlobalPlayerQuery('');
                 setGlobalPlayerResults([]);
               }}
-              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
-              title="Search any MLB player"
+              className="inline-flex items-center gap-1.5 px-2 xl:px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:border-sky-500 transition"
+              title="Search any MLB player (press /)"
             >
               <Search className="w-3.5 h-3.5 text-sky-500" />
-              <span className="hidden sm:inline">Search</span>
-              <span className="hidden 2xl:inline">Player</span>
-              <kbd className="hidden 2xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300">/</kbd>
+              <span className="hidden xl:inline">Search</span>
+              <kbd className="hidden xl:inline-block px-1 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300">/</kbd>
             </button>
 
             <button
               onClick={() => handleSyncNow(true)}
               disabled={syncing}
-              title={syncing ? 'Syncing...' : 'Sync Now'}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
+              title={syncing ? 'Syncing live MLB wire...' : `Sync Now (Last synced ${formatMinutesAgo(lastSyncedAt)})`}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:opacity-60 transition"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync Now'}</span>
+              <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync'}</span>
             </button>
 
             <button
               onClick={() => setDarkMode(!darkMode)}
               aria-label="Toggle Light/Dark Mode"
-              className="p-1.5 sm:p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+              title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
             >
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
@@ -2535,13 +2617,23 @@ export default function App() {
                             )}
                             {tx.total_value_millions > 0 && (
                               <span className="font-stat font-bold text-[10px] text-emerald-500">
-                                ${tx.total_value_millions}M
+                                {formatMoneyMillions(tx.total_value_millions)}
                               </span>
                             )}
                           </button>
                         );
                       })}
               </div>
+              <button
+                type="button"
+                onClick={() => handleSyncNow(true)}
+                disabled={syncing}
+                title="Click to sync latest MLB moves"
+                className="ml-auto pl-2 hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 hover:text-sky-500 whitespace-nowrap shrink-0 transition"
+              >
+                <Clock className="w-3 h-3" />
+                <span>Synced {formatMinutesAgo(lastSyncedAt)}</span>
+              </button>
             </div>
           </div>
         )}
@@ -4110,6 +4202,20 @@ export default function App() {
                     </span>
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => setBigDealsOnly((b) => !b)}
+                    title="Show only signings and extensions worth $10M or more"
+                    className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold border transition ${
+                      bigDealsOnly
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 hover:border-emerald-500/50'
+                    }`}
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>$10M+ Deals</span>
+                  </button>
+
                   <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -4241,6 +4347,17 @@ export default function App() {
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 hover:bg-red-500/25 transition"
                         >
                           <span>Pinned Players Only</span>
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {bigDealsOnly && (
+                        <button
+                          type="button"
+                          onClick={() => setBigDealsOnly(false)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 transition"
+                        >
+                          <span>$10M+ Deals Only</span>
                           <X className="w-3 h-3" />
                         </button>
                       )}
@@ -4444,8 +4561,22 @@ export default function App() {
                                 <span>{tx.source_name}</span>
                               )}
                               <span>•</span>
-                              <span>{formatSafeCardDate(tx.reported_at)}</span>
-
+                              <span title={formatSafeCardDate(tx.reported_at)}>
+                                {formatRelativeCardTime(tx.reported_at)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => copyMoveSummary(tx, cleanHeadline, destTeam.abbr, e)}
+                                title={copiedTxId === tx.id ? 'Copied move summary!' : 'Copy move summary'}
+                                aria-label="Copy move summary"
+                                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-sky-500 transition"
+                              >
+                                {copiedTxId === tx.id ? (
+                                  <Check className="w-3 h-3 text-emerald-500" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
                             </div>
                           </div>
 
@@ -4658,11 +4789,11 @@ export default function App() {
                                   <span className="px-3 py-1 rounded-lg text-xs sm:text-sm font-extrabold bg-sky-500/15 text-sky-700 dark:text-sky-300">
                                     {tx.contract_years ? `${tx.contract_years} yr${tx.contract_years > 1 ? 's' : ''}` : ''}
                                     {tx.contract_years && tx.total_value_millions ? ' / ' : ''}
-                                    {tx.total_value_millions ? `$${tx.total_value_millions}M` : ''}
+                                    {tx.total_value_millions ? formatMoneyMillions(tx.total_value_millions) : ''}
                                   </span>
                                   {tx.aav_millions > 0 && (
                                     <span className="text-[11px] font-semibold text-slate-400">
-                                      ${tx.aav_millions}M AAV
+                                      {formatMoneyMillions(tx.aav_millions)} AAV
                                     </span>
                                   )}
                                 </div>
@@ -4732,8 +4863,11 @@ export default function App() {
                         : 'border-slate-100 dark:border-slate-800 hover:border-emerald-500/40'
                     }`}
                   >
-                    <div className="text-xl font-black text-emerald-500">
-                      ${leagueStats.totalSpent.toFixed(1)}M
+                    <div
+                      className="text-xl font-black text-emerald-500 tabular-nums"
+                      title={formatExactMillionsTooltip(leagueStats.totalSpent)}
+                    >
+                      {formatMoneyMillions(leagueStats.totalSpent)}
                     </div>
                     <div className="text-[11px] text-slate-500 font-semibold">Tracked Deals</div>
                   </button>
@@ -4781,26 +4915,56 @@ export default function App() {
                     View all
                   </button>
                 </div>
-                <div className="space-y-2">
-                  {spendingLeaderboard.slice(0, 8).map((row) => (
-                    <button
-                      key={row.team.abbr}
-                      onClick={() => openTeamHub(row.team.abbr)}
-                      className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/70 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="w-6 h-6 rounded-md bg-slate-900 border border-white/10 flex items-center justify-center p-0.5 shrink-0">
-                          <TeamLogo abbr={row.team.abbr} size="xs" />
-                        </span>
-                        <span className="text-xs font-bold">{row.team.short}</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs font-extrabold">
-                          {row.totalMillions > 0 ? `$${row.totalMillions.toFixed(1)}M` : `${row.totalMoves} moves`}
+                <div className="space-y-1.5">
+                  {spendingLeaderboard.slice(0, 8).map((row) => {
+                    const isClubFiltered = selectedTeams.length === 1 && selectedTeams[0] === row.team.abbr;
+                    return (
+                      <div
+                        key={row.team.abbr}
+                        className={`flex items-center justify-between gap-1 rounded-lg p-1.5 transition ${
+                          isClubFiltered
+                            ? 'bg-sky-500/10 ring-1 ring-sky-500/30'
+                            : 'hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openTeamHub(row.team.abbr)}
+                          title={`Open ${row.team.name} Hub`}
+                          className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                        >
+                          <span className="w-6 h-6 rounded-md bg-slate-900 border border-white/10 flex items-center justify-center p-0.5 shrink-0">
+                            <TeamLogo abbr={row.team.abbr} size="xs" />
+                          </span>
+                          <span className="text-xs font-bold truncate">{row.team.short}</span>
+                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            className="text-xs font-extrabold tabular-nums"
+                            title={row.totalMillions > 0 ? formatExactMillionsTooltip(row.totalMillions) : undefined}
+                          >
+                            {row.totalMillions > 0 ? formatMoneyMillions(row.totalMillions) : `${row.totalMoves} moves`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMyTeamsOnlyActive(false);
+                              setSelectedTeams(isClubFiltered ? [] : [row.team.abbr]);
+                            }}
+                            title={isClubFiltered ? `Clear ${row.team.short} feed filter` : `Filter feed to ${row.team.short}`}
+                            aria-label={`Filter feed to ${row.team.short}`}
+                            className={`p-1 rounded transition ${
+                              isClubFiltered
+                                ? 'bg-sky-500/20 text-sky-500'
+                                : 'text-slate-400 hover:text-sky-500 hover:bg-slate-200/70 dark:hover:bg-slate-700/60'
+                            }`}
+                          >
+                            <Filter className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -5739,7 +5903,7 @@ export default function App() {
                           <div className="flex flex-wrap items-center gap-2">
                             {liveTeamAdd > 0 && (
                               <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-500/15 text-emerald-500 tabular-nums">
-                                +${liveTeamAdd.toFixed(1)}M Offseason Deals
+                                +{formatMoneyMillions(liveTeamAdd)} Offseason Deals
                               </span>
                             )}
                             <button
@@ -6063,11 +6227,11 @@ export default function App() {
                                     {a.status}
                                   </span>
                                   <span>•</span>
-                                  <span>{new Date(a.reported_at).toLocaleDateString()}</span>
+                                  <span>{formatSafeCardDate(a.reported_at)}</span>
                                   {a.total_value_millions > 0 && (
                                     <>
                                       <span>•</span>
-                                      <span className="font-extrabold text-sky-500">${a.total_value_millions}M</span>
+                                      <span className="font-extrabold text-sky-500">{formatMoneyMillions(a.total_value_millions)}</span>
                                     </>
                                   )}
                                 </div>
@@ -6655,7 +6819,12 @@ export default function App() {
                         <DollarSign className="w-5 h-5" />
                       </div>
                       <div>
-                        <div className="text-xl font-black">${Number(displaySpent || 0).toFixed(1)}M</div>
+                        <div
+                          className="text-xl font-black tabular-nums"
+                          title={formatExactMillionsTooltip(displaySpent)}
+                        >
+                          {formatMoneyMillions(displaySpent)}
+                        </div>
                         <div className="text-xs text-slate-500">Disclosed New Deals ({spendingCycle})</div>
                       </div>
                     </div>
@@ -6706,8 +6875,11 @@ export default function App() {
                                   <span className="font-bold text-sm">{row.team.name}</span>
                                 </div>
                                 <div className="text-right">
-                                  <span className="font-extrabold text-sm">
-                                    ${row.totalMillions.toFixed(1)}M
+                                  <span
+                                    className="font-extrabold text-sm tabular-nums"
+                                    title={row.totalMillions > 0 ? formatExactMillionsTooltip(row.totalMillions) : undefined}
+                                  >
+                                    {formatMoneyMillions(row.totalMillions)}
                                   </span>
                                   <span className="ml-2 text-xs text-slate-400">
                                     ({row.totalMoves} {row.totalMoves === 1 ? 'move' : 'moves'})
